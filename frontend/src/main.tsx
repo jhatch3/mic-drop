@@ -7,6 +7,7 @@ import "@solana/wallet-adapter-react-ui/styles.css";
 import App from "./App";
 import Host from "./game/Host";
 import Player from "./game/Player";
+import DanceStation from "./dance/DanceStation";
 
 const RPC = import.meta.env.VITE_RPC_URL ?? "https://api.devnet.solana.com";
 
@@ -14,6 +15,7 @@ function Router() {
   const path = window.location.pathname;
   if (path === "/host") return <Host />;
   if (path === "/play") return <Player />;
+  if (path === "/dance-host") return <DanceStation />;
   return <App />;
 }
 
