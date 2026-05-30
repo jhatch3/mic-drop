@@ -59,6 +59,77 @@ function detectPitch(buf: Float32Array): { midi: number | null; conf: number } {
   return { midi, conf };
 }
 
+// Draw the side-by-side pitch graph on a canvas
+function drawGraph(
+  canvas: HTMLCanvasElement | null,
+  points: { t: number; target: number | null; singer: number | null }[],
+  now: number,
+  window: number,
+) {
+  if (!canvas) return;
+  const ctx = canvas.getContext("2d");
+  if (!ctx) return;
+  const { width: W, height: H } = canvas;
+
+  ctx.clearRect(0, 0, W, H);
+
+  // Background
+  ctx.fillStyle = "#0d0d0d";
+  ctx.fillRect(0, 0, W, H);
+
+  // Grid lines every semitone
+  const MIDI_MIN = 48; // C3
+  const MIDI_MAX = 84; // C6
+  const midiToY = (m: number) => H - ((m - MIDI_MIN) / (MIDI_MAX - MIDI_MIN)) * H;
+  const tToX    = (t: number) => ((t - (now - window)) / window) * W;
+
+  ctx.strokeStyle = "#1a1a1a";
+  ctx.lineWidth = 1;
+  for (let m = MIDI_MIN; m <= MIDI_MAX; m += 2) {
+    const y = midiToY(m);
+    ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(W, y); ctx.stroke();
+  }
+
+  // Now line
+  ctx.strokeStyle = "#ffffff18";
+  ctx.lineWidth = 1;
+  ctx.setLineDash([4, 4]);
+  ctx.beginPath(); ctx.moveTo(W, 0); ctx.lineTo(W, H); ctx.stroke();
+  ctx.setLineDash([]);
+
+  // Target trace (purple)
+  ctx.strokeStyle = "#a78bfa";
+  ctx.lineWidth = 3;
+  ctx.lineJoin = "round";
+  ctx.beginPath();
+  let started = false;
+  for (const p of points) {
+    if (p.target === null) { started = false; continue; }
+    const x = tToX(p.t), y = midiToY(p.target);
+    if (!started) { ctx.moveTo(x, y); started = true; } else ctx.lineTo(x, y);
+  }
+  ctx.stroke();
+
+  // Singer trace (yellow)
+  ctx.strokeStyle = "#facc15";
+  ctx.lineWidth = 2.5;
+  ctx.beginPath();
+  started = false;
+  for (const p of points) {
+    if (p.singer === null) { started = false; continue; }
+    const x = tToX(p.t), y = midiToY(p.singer);
+    if (!started) { ctx.moveTo(x, y); started = true; } else ctx.lineTo(x, y);
+  }
+  ctx.stroke();
+
+  // Legend
+  ctx.font = "11px system-ui";
+  ctx.fillStyle = "#a78bfa";
+  ctx.fillText("▬ Target", 8, 16);
+  ctx.fillStyle = "#facc15";
+  ctx.fillText("▬ You", 8, 30);
+}
+
 // Octave-folded cents error (from CLAUDE.md spec)
 function centsError(singer: number, target: number): number {
   const diff = singer - target;
@@ -86,6 +157,10 @@ export default function Karaoke() {
   const streamRef   = useRef<MediaStream | null>(null);
   const hitsRef     = useRef(0);
   const scoredRef   = useRef(0);
+  const canvasRef   = useRef<HTMLCanvasElement>(null);
+  // Rolling history for the graph: [{ t, target, singer }]
+  const graphRef    = useRef<{ t: number; target: number | null; singer: number | null }[]>([]);
+  const GRAPH_WINDOW = 6; // seconds of history to show
 
   // Load assets
   useEffect(() => {
@@ -129,6 +204,13 @@ export default function Karaoke() {
         setScored(scoredRef.current);
         setScore(pct);
       }
+
+      // Push to graph history and draw
+      graphRef.current.push({ t, target: target?.midi ?? null, singer: midi });
+      // Trim to window
+      const cutoff = t - GRAPH_WINDOW;
+      graphRef.current = graphRef.current.filter(p => p.t >= cutoff);
+      drawGraph(canvasRef.current, graphRef.current, t, GRAPH_WINDOW);
     }
 
     rafRef.current = requestAnimationFrame(tick);
@@ -246,6 +328,21 @@ export default function Karaoke() {
             {midiLabel(targetMidi)}
           </div>
         </div>
+      </div>
+
+      {/* Pitch graph */}
+      <div style={{ position: "relative" }}>
+        <canvas
+          ref={canvasRef}
+          width={800}
+          height={140}
+          style={{ width: "100%", height: 140, borderRadius: 10, border: "1px solid #1f1f1f", display: "block" }}
+        />
+        {!playing && (
+          <div style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", color: "#555", fontSize: 13 }}>
+            Hit ▶ Sing to see your pitch vs. the target
+          </div>
+        )}
       </div>
 
       {/* Lyrics */}
