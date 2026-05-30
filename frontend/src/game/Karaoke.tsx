@@ -22,7 +22,8 @@ const SONG = {
   artist:  "Katy Perry",
 };
 
-const SR = 44100, FMIN = 65, FMAX = 1000, RMS_GATE = 0.003, CONF_MIN = 0.5;
+const SR = 44100, FMIN = 65, FMAX = 1000, RMS_GATE = 0.002, CONF_MIN = 0.4;
+const HIT_CENTS = 75; // widened from 50 → easier
 const NOTE_NAMES = ["C","C#","D","D#","E","F","F#","G","G#","A","A#","B"];
 function noteFromMidi(midi: number) {
   const n = Math.round(midi);
@@ -137,6 +138,7 @@ export default function Karaoke() {
   const [scored, setScored]         = useState(0);
   const [liveMidi, setLiveMidi]     = useState<number | null>(null);
   const [targetMidi, setTargetMidi] = useState<number | null>(null);
+  const [centsOff, setCentsOff]     = useState<number | null>(null);
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration]     = useState(0);
 
@@ -171,9 +173,13 @@ export default function Karaoke() {
       setTargetMidi(target?.midi ?? null);
       if (target?.midi != null) {
         scoredRef.current++;
-        if (midi && conf >= CONF_MIN && Math.abs(centsError(midi, target.midi)) <= 50) hitsRef.current++;
+        const cents = midi ? centsError(midi, target.midi) : null;
+        setCentsOff(cents);
+        if (midi && conf >= CONF_MIN && cents !== null && Math.abs(cents) <= HIT_CENTS) hitsRef.current++;
         setHits(hitsRef.current); setScored(scoredRef.current);
         setScore(Math.round(100 * hitsRef.current / scoredRef.current));
+      } else {
+        setCentsOff(null);
       }
       graphRef.current.push({ t, target: target?.midi ?? null, singer: midi });
       graphRef.current = graphRef.current.filter(p => p.t >= t - 6);
@@ -255,10 +261,6 @@ export default function Karaoke() {
         {/* Score badge */}
         <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
           {micOn && <div style={{ fontSize: 11, color: "#f87171", background: "#f8717115", border: "1px solid #f8717130", borderRadius: 20, padding: "3px 10px" }}>● REC</div>}
-          <div style={{ background: "#0f0f1a", border: "1px solid #1a1a2e", borderRadius: 12, padding: "6px 16px", textAlign: "center" }}>
-            <div style={{ fontSize: 10, color: "#4b5563", letterSpacing: 2, textTransform: "uppercase" }}>Score</div>
-            <div style={{ fontSize: 26, fontWeight: 900, color: scoreColor, lineHeight: 1 }}>{score}</div>
-          </div>
           <button onClick={restart} style={{ background: "transparent", border: "1px solid #1f2937", borderRadius: 10, color: "#6b7280", padding: "8px 14px", cursor: "pointer", fontSize: 18 }}>↺</button>
           <button onClick={togglePlay} style={{ background: playing ? "#1f2937" : "linear-gradient(135deg,#7c3aed,#6d28d9)", border: "none", borderRadius: 10, color: "#fff", padding: "10px 22px", cursor: "pointer", fontWeight: 700, fontSize: 14 }}>
             {playing ? "⏸ Pause" : "▶ Sing"}
@@ -337,31 +339,62 @@ export default function Karaoke() {
             )}
           </div>
 
-          {/* Note stats */}
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginTop: 12 }}>
-            {[
-              { label: "You're singing", value: liveMidi ? noteFromMidi(liveMidi) : "—", sub: liveMidi ? `MIDI ${liveMidi.toFixed(1)}` : "silent", color: "#facc15" },
-              { label: "Target note", value: targetMidi ? noteFromMidi(targetMidi) : "—", sub: targetMidi ? `MIDI ${targetMidi.toFixed(1)}` : "rest", color: "#a78bfa" },
-            ].map(({ label, value, sub, color }) => (
-              <div key={label} style={{ background: "#0a0a18", border: "1px solid #0f0f1a", borderRadius: 10, padding: "12px 14px" }}>
-                <div style={{ fontSize: 10, color: "#374151", letterSpacing: 2, textTransform: "uppercase", marginBottom: 6 }}>{label}</div>
-                <div style={{ fontSize: 28, fontWeight: 800, color, fontFamily: "monospace", lineHeight: 1 }}>{value}</div>
-                <div style={{ fontSize: 11, color: "#1f2937", marginTop: 4 }}>{sub}</div>
-              </div>
-            ))}
+          {/* Live score — big */}
+          <div style={{ background: "#0a0a18", border: "1px solid #0f0f1a", borderRadius: 12, padding: "16px", marginTop: 12, textAlign: "center" }}>
+            <div style={{ fontSize: 10, color: "#374151", letterSpacing: 3, textTransform: "uppercase", marginBottom: 4 }}>Live Score</div>
+            <div style={{ fontSize: 72, fontWeight: 900, color: scoreColor, lineHeight: 1, transition: "color 0.3s" }}>{score}</div>
+            <div style={{ fontSize: 12, color: "#374151", marginTop: 4 }}>{hits} / {scored} frames hit</div>
+            {/* Accuracy bar */}
+            <div style={{ height: 5, background: "#111", borderRadius: 3, overflow: "hidden", marginTop: 10 }}>
+              <div style={{ height: "100%", width: `${score}%`, background: `linear-gradient(to right, #7c3aed, ${scoreColor})`, borderRadius: 3, transition: "width 0.2s ease" }} />
+            </div>
           </div>
 
-          {/* Accuracy bar */}
-          <div style={{ background: "#0a0a18", border: "1px solid #0f0f1a", borderRadius: 10, padding: "14px 16px", marginTop: 10 }}>
-            <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 8 }}>
-              <span style={{ fontSize: 10, color: "#374151", letterSpacing: 2, textTransform: "uppercase" }}>Accuracy</span>
-              <span style={{ fontSize: 11, color: "#4b5563", fontFamily: "monospace" }}>{hits}/{scored} hits</span>
+          {/* Note + tuner */}
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginTop: 10 }}>
+            <div style={{ background: "#0a0a18", border: "1px solid #0f0f1a", borderRadius: 10, padding: "12px 14px" }}>
+              <div style={{ fontSize: 10, color: "#374151", letterSpacing: 2, textTransform: "uppercase", marginBottom: 6 }}>You</div>
+              <div style={{ fontSize: 26, fontWeight: 800, color: liveMidi ? "#facc15" : "#1f2937", fontFamily: "monospace", lineHeight: 1 }}>
+                {liveMidi ? noteFromMidi(liveMidi) : "—"}
+              </div>
+              <div style={{ fontSize: 11, color: "#374151", marginTop: 4 }}>{liveMidi ? `${liveMidi.toFixed(1)} midi` : "silent"}</div>
             </div>
-            <div style={{ height: 6, background: "#111", borderRadius: 3, overflow: "hidden" }}>
-              <div style={{ height: "100%", width: `${score}%`, background: `linear-gradient(to right, #7c3aed, ${scoreColor})`, borderRadius: 3, transition: "width 0.3s ease" }} />
+            <div style={{ background: "#0a0a18", border: "1px solid #0f0f1a", borderRadius: 10, padding: "12px 14px" }}>
+              <div style={{ fontSize: 10, color: "#374151", letterSpacing: 2, textTransform: "uppercase", marginBottom: 6 }}>Target</div>
+              <div style={{ fontSize: 26, fontWeight: 800, color: targetMidi ? "#a78bfa" : "#1f2937", fontFamily: "monospace", lineHeight: 1 }}>
+                {targetMidi ? noteFromMidi(targetMidi) : "—"}
+              </div>
+              <div style={{ fontSize: 11, color: "#374151", marginTop: 4 }}>{targetMidi ? `${targetMidi.toFixed(1)} midi` : "rest"}</div>
+            </div>
+          </div>
+
+          {/* Tuner — cents off indicator */}
+          <div style={{ background: "#0a0a18", border: "1px solid #0f0f1a", borderRadius: 10, padding: "12px 16px", marginTop: 10 }}>
+            <div style={{ fontSize: 10, color: "#374151", letterSpacing: 2, textTransform: "uppercase", marginBottom: 8 }}>Pitch Accuracy</div>
+            <div style={{ position: "relative", height: 8, background: "#111", borderRadius: 4, overflow: "visible" }}>
+              {/* Zone markers */}
+              <div style={{ position: "absolute", left: "50%", top: -3, width: 2, height: 14, background: "#1f2937", transform: "translateX(-50%)" }} />
+              {/* Green hit zone */}
+              <div style={{ position: "absolute", left: `${50 - (HIT_CENTS / 200) * 100}%`, width: `${(HIT_CENTS / 100) * 100}%`, height: "100%", background: "#4ade8022", borderRadius: 4 }} />
+              {/* Cursor */}
+              {centsOff !== null && (
+                <div style={{
+                  position: "absolute",
+                  left: `${Math.min(98, Math.max(2, 50 + (centsOff / 200) * 100))}%`,
+                  top: "50%", transform: "translate(-50%, -50%)",
+                  width: 12, height: 12, borderRadius: "50%",
+                  background: Math.abs(centsOff) <= HIT_CENTS ? "#4ade80" : "#f87171",
+                  boxShadow: `0 0 8px ${Math.abs(centsOff) <= HIT_CENTS ? "#4ade80" : "#f87171"}`,
+                  transition: "left 0.05s, background 0.1s",
+                }} />
+              )}
             </div>
             <div style={{ display: "flex", justifyContent: "space-between", marginTop: 6, fontSize: 10, color: "#1f2937" }}>
-              <span>0</span><span>50</span><span>100</span>
+              <span>♭ flat</span>
+              <span style={{ color: centsOff !== null ? (Math.abs(centsOff) <= HIT_CENTS ? "#4ade80" : "#f87171") : "#1f2937", fontWeight: 600 }}>
+                {centsOff !== null ? `${centsOff > 0 ? "+" : ""}${Math.round(centsOff)}¢` : "—"}
+              </span>
+              <span>sharp ♯</span>
             </div>
           </div>
 
