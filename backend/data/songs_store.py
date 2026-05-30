@@ -133,6 +133,26 @@ def get_instrumental_path(song_id: str) -> Path:
     return _ensure_cached(song_id) / "instrumental.mp3"
 
 
+def list_catalog() -> list[dict]:
+    """Return the song catalog (no contour/mp3) for /api/songs."""
+    with cursor() as cur:
+        cur.execute(
+            "SELECT song_id, title, artist, difficulty, duration_sec "
+            "FROM songs_catalog ORDER BY title"
+        )
+        rows = cur.fetchall()
+    return [
+        {
+            "song_id": r[0],
+            "title": r[1],
+            "artist": r[2],
+            "difficulty": int(r[3]),
+            "duration_sec": float(r[4]),
+        }
+        for r in rows
+    ]
+
+
 def sync_manifest() -> Path:
     """Regenerate assets/songs/manifest.json from the Snowflake catalog."""
     with cursor() as cur:

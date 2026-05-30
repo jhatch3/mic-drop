@@ -6,6 +6,8 @@ for what diverges from the MVP spec (Socket.io session server, lyrics scoring).
 
 from __future__ import annotations
 
+import logging
+import os
 from pathlib import Path
 
 from fastapi import FastAPI
@@ -14,11 +16,14 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from ai.router import router as ai_router
+from data.router import router as data_router
 from orchestration.router import router as orchestration_router
 from reference.router import router as reference_router
 from scoring.router import router as scoring_router
 from transcription.live_ws import router as live_ws_router
 from transcription.router import router as transcription_router
+
+log = logging.getLogger(__name__)
 
 app = FastAPI(title="Pitch Battle API")
 
@@ -59,9 +64,35 @@ app.include_router(transcription_router, prefix="/api")     # Stream D: /api/tra
 app.include_router(reference_router, prefix="/api")         # Stream D: lyrics ref
 app.include_router(ai_router, prefix="/api")                # Stream D: /api/mc-voice
 app.include_router(orchestration_router, prefix="/api")     # Stream D: /api/match/finish
+app.include_router(data_router, prefix="/api")              # Stream D: /api/songs, /api/leaderboard
+
+# Solana oracle is optional — if solders isn't installed yet, skip the route
+# so the rest of the API still boots.
+try:
+    from chain.router import router as chain_router  # noqa: WPS433
+    app.include_router(chain_router, prefix="/api")         # Stream A↔D: /api/oracle/pubkey
+    _CHAIN_AVAILABLE = True
+except ImportError as e:
+    log.warning("chain router not mounted (%s); /api/oracle/pubkey unavailable", e)
+    _CHAIN_AVAILABLE = False
 
 # WS
 app.include_router(live_ws_router)  # /ws/live (no /api prefix)
 
 # Static: MC audio clips. Served at /mc-audio/<match_id>.mp3 + /mc-audio/fallback.mp3.
 app.mount("/mc-audio", StaticFiles(directory=_MC_DIR), name="mc-audio")
+
+
+@app.on_event("startup")
+def _bootstrap_oracle() -> None:
+    """On devnet, make sure the oracle exists + is funded before the first match."""
+    if not _CHAIN_AVAILABLE:
+        return
+    if os.getenv("ESCROW_MODE", "mock").lower() != "devnet":
+        return
+    try:
+        from chain.oracle import ensure_funded, oracle_pubkey  # noqa: WPS433
+        bal = ensure_funded()
+        log.info("oracle ready: %s (balance=%d lamports)", oracle_pubkey(), bal)
+    except Exception:  # noqa: BLE001
+        log.exception("oracle bootstrap failed")

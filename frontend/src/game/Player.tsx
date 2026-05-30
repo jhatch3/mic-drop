@@ -4,6 +4,14 @@ import { WalletMultiButton } from "@solana/wallet-adapter-react-ui";
 import { getSocket } from "./socket";
 import type { RoomState } from "./types";
 
+interface FinishPayload {
+  room: RoomState;
+  winner: "p1" | "p2" | "tie";
+  payout_tx: string;
+  mc_audio_url: string;
+  commentary: string;
+}
+
 export default function Player() {
   const wallet = useWallet();
   const socket = getSocket();
@@ -15,6 +23,7 @@ export default function Player() {
   const [joined, setJoined] = useState(false);
   const [myTurn, setMyTurn] = useState(false);
   const [gameOver, setGameOver] = useState(false);
+  const [finish, setFinish] = useState<FinishPayload | null>(null);
   const [log, setLog] = useState<string[]>([]);
   const [error, setError] = useState("");
 
@@ -38,11 +47,19 @@ export default function Player() {
       }
     });
     socket.on("game:over", (r: RoomState) => {
+      // Authoritative result still incoming via match:finished — show scoring banner.
       setRoom(r);
       setGameOver(true);
       setMyTurn(false);
-      const winner = r.players.find((p) => p.wallet === r.winner);
-      addLog(r.winner ? `Game over! ${winner?.name ?? "?"} wins!` : "Tie!");
+      addLog("Both takes recorded. Scoring on backend…");
+    });
+    socket.on("match:finished", (p: FinishPayload) => {
+      setFinish(p);
+      setRoom(p.room);
+      setGameOver(true);
+      setMyTurn(false);
+      const youWon = p.room.winner && p.room.winner === wallet.publicKey?.toBase58();
+      addLog(p.winner === "tie" ? "Tie! Stakes refunded." : youWon ? "You won!" : "You lost.");
     });
     socket.on("error", ({ msg }: { msg: string }) => {
       setError(msg);
@@ -149,7 +166,7 @@ export default function Player() {
         {/* Game over */}
         {gameOver && room && (
           <div style={styles.card}>
-            <div style={styles.cardTitle}>Game Over</div>
+            <div style={styles.cardTitle}>{finish ? "Game Over" : "Scoring…"}</div>
             {room.players.map((p) => (
               <div
                 key={p.wallet}
@@ -161,12 +178,27 @@ export default function Player() {
                   padding: "10px 0",
                 }}
               >
-                {p.wallet === room.winner ? "🏆 " : ""}{p.name}{p.wallet === wallet.publicKey?.toBase58() ? " (you)" : ""}: {p.score}/100
+                {p.wallet === room.winner ? "🏆 " : ""}{p.name}{p.wallet === wallet.publicKey?.toBase58() ? " (you)" : ""}: {finish ? `${p.score}/100` : "—"}
               </div>
             ))}
-            {room.winner === wallet.publicKey?.toBase58() && (
+            {finish && finish.winner === "tie" && (
+              <div style={{ color: "#facc15", fontWeight: 700, fontSize: 16, marginTop: 12, textAlign: "center" }}>
+                Tie — stakes refunded.
+              </div>
+            )}
+            {finish && room.winner === wallet.publicKey?.toBase58() && (
               <div style={{ color: "#4ade80", fontWeight: 700, fontSize: 18, marginTop: 12, textAlign: "center" }}>
                 🎉 You won! SOL is on its way.
+              </div>
+            )}
+            {finish?.commentary && (
+              <div style={{ color: "#9ca3af", fontSize: 13, marginTop: 12, fontStyle: "italic" }}>
+                "{finish.commentary}"
+              </div>
+            )}
+            {finish?.payout_tx && (
+              <div style={{ color: "#6b7280", fontSize: 11, marginTop: 8, wordBreak: "break-all" }}>
+                tx: {finish.payout_tx}
               </div>
             )}
           </div>

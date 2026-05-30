@@ -46,6 +46,29 @@ See `backend/transcription/` and `backend/reference/`.
 - STT on singing is unreliable (sustained vowels, melisma, backing bleed).
   Treat the lyrics score as flavor, not truth — see `docs /speech-agent.md`.
 
+## 3a. Settle is signed by the backend oracle, not the laptop
+
+**Spec said:** `settle` / `refund` are oracle-only; the oracle is the backend.
+
+**What changed (May 2026 integration pass):** the laptop no longer holds the
+oracle keypair. The backend loads it from `ORACLE_KEYPAIR_PATH`, exposes the
+pubkey at `GET /api/oracle/pubkey`, and signs `settle`/`refund` from Python
+(`backend/chain/escrow.py` — manual Anchor discriminator + Borsh, via
+`solders` + `solana-py`). Laptop fetches the pubkey on mount and passes it
+into `create_match(..., oracle, ...)` so `has_one = oracle` lines up.
+
+The previous Host.tsx generated a fresh oracle in the browser on every page
+load and signed settle from there — that violated CLAUDE.md invariant #6 and
+broke on page reloads.
+
+## 3b. Match history — Snowflake `matches` + `leaderboard` view
+
+`POST /api/match/finish` now writes a row to `MICDROP.PUBLIC.matches` per
+finished game (best-effort — Snowflake failure does not block the result
+screen). A `leaderboard` view aggregates wins/losses/avg_score by pubkey;
+`GET /api/leaderboard` returns the top N. Schema in
+`backend/data/schema/matches.sql`.
+
 ## 3. Escrow — extra `treasury` + `feeBps` fields
 
 **Spec said:** `EscrowClient.createMatch(stakeLamports, p2)` and `settle()`

@@ -1,33 +1,78 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { useWallet, useConnection } from "@solana/wallet-adapter-react";
 import { WalletMultiButton } from "@solana/wallet-adapter-react-ui";
 import { AnchorProvider, Program, BN } from "@coral-xyz/anchor";
-import { Keypair, PublicKey, LAMPORTS_PER_SOL, SystemProgram } from "@solana/web3.js";
+import { PublicKey, LAMPORTS_PER_SOL, SystemProgram } from "@solana/web3.js";
 import QRCode from "react-qr-code";
 import { getSocket } from "./socket";
 import type { RoomState } from "./types";
 import IDL from "../idl/pitch_battle.json";
 
-const PROGRAM_ID = new PublicKey("2eMwChdNVoxeoWjdaiTuBGasDiHCKN3jbw7dL5eSyuZf");
-const TREASURY   = new PublicKey("2KnfMtidoDSVYxJDBNEK1e77rVQijvJ71zkBgz6kwejm");
-const FEE_BPS    = 100;
+// ─── Static config (overridable by /api/oracle/pubkey on mount) ─────────────
+const DEFAULT_PROGRAM_ID = "2eMwChdNVoxeoWjdaiTuBGasDiHCKN3jbw7dL5eSyuZf";
+const DEFAULT_TREASURY   = "2KnfMtidoDSVYxJDBNEK1e77rVQijvJ71zkBgz6kwejm";
+const FEE_BPS            = 100;  // 1%
 
-// Oracle keypair held in-memory (backed by backend in production)
-const oracleKp = Keypair.generate();
+const API_BASE = import.meta.env.VITE_API_BASE ?? "";  // "" → use Vite proxy
 
-function matchPda(matchId: string) {
-  return PublicKey.findProgramAddressSync([Buffer.from("match"), Buffer.from(matchId)], PROGRAM_ID)[0];
+// ─── Types ───────────────────────────────────────────────────────────────────
+type HostPhase = "lobby" | "waiting" | "gaming" | "scoring" | "finished";
+
+interface OracleInfo {
+  oracle_pubkey: string;
+  program_id: string;
+  treasury_pubkey: string;
+  escrow_mode: "mock" | "devnet";
+  rpc_url: string;
 }
-function vaultPda(matchId: string) {
-  return PublicKey.findProgramAddressSync([Buffer.from("vault"), Buffer.from(matchId)], PROGRAM_ID)[0];
+
+interface Song {
+  song_id: string;
+  title: string;
+  artist: string;
+  difficulty: number;
+  duration_sec: number;
 }
 
-type HostPhase = "lobby" | "waiting" | "gaming" | "finished";
+interface ScoreRow {
+  song_id: string;
+  player_id: string;
+  score: number;
+  frames_scored: number;
+  frames_hit: number;
+}
 
+interface FinishResponse {
+  scores: ScoreRow[];
+  winner: "p1" | "p2" | "tie";
+  commentary: string;
+  mc_audio_url: string;
+  payout_tx: string;
+  leaderboard: Array<{ player: string; wins: number; losses: number; ties?: number }>;
+}
+
+// ─── PDAs ────────────────────────────────────────────────────────────────────
+function matchPda(matchId: string, programId: PublicKey) {
+  return PublicKey.findProgramAddressSync(
+    [Buffer.from("match"), Buffer.from(matchId)], programId,
+  )[0];
+}
+function vaultPda(matchId: string, programId: PublicKey) {
+  return PublicKey.findProgramAddressSync(
+    [Buffer.from("vault"), Buffer.from(matchId)], programId,
+  )[0];
+}
+
+// ─── Component ───────────────────────────────────────────────────────────────
 export default function Host() {
   const { connection } = useConnection();
   const wallet = useWallet();
   const socket = getSocket();
+
+  // Bootstrap from backend
+  const [oracle, setOracle] = useState<OracleInfo | null>(null);
+  const [songs, setSongs] = useState<Song[]>([]);
+  const [selectedSongId, setSelectedSongId] = useState<string>("");
 
   const [stakeSOL, setStakeSOL] = useState("0.01");
   const [room, setRoom] = useState<RoomState | null>(null);
@@ -35,9 +80,42 @@ export default function Host() {
   const [log, setLog] = useState<string[]>([]);
   const [busy, setBusy] = useState(false);
   const [currentTurn, setCurrentTurn] = useState<{ player: string; wallet: string } | null>(null);
+  const [finish, setFinish] = useState<FinishResponse | null>(null);
 
-  const addLog = (msg: string) => setLog((p) => [`${new Date().toLocaleTimeString()} — ${msg}`, ...p]);
+  // Audio capture (laptop owns the mic — phones never record)
+  const recorderRef = useRef<MediaRecorder | null>(null);
+  const chunksRef = useRef<Blob[]>([]);
+  const takesRef = useRef<{ p1?: Blob; p2?: Blob }>({});
+  const matchIdRef = useRef<string | null>(null);
 
+  const addLog = (msg: string) =>
+    setLog((p) => [`${new Date().toLocaleTimeString()} — ${msg}`, ...p]);
+
+  // ── Bootstrap: oracle pubkey + song catalog ─────────────────────────────
+  useEffect(() => {
+    (async () => {
+      try {
+        const r = await fetch(`${API_BASE}/api/oracle/pubkey`);
+        if (r.ok) setOracle(await r.json());
+        else addLog(`oracle: backend returned ${r.status} (running mock?)`);
+      } catch (e: any) {
+        addLog(`oracle: ${e.message} (backend down?)`);
+      }
+      try {
+        const r = await fetch(`${API_BASE}/api/songs`);
+        if (r.ok) {
+          const list: Song[] = await r.json();
+          setSongs(list);
+          if (list.length && !selectedSongId) setSelectedSongId(list[0].song_id);
+        }
+      } catch (e: any) {
+        addLog(`songs: ${e.message}`);
+      }
+    })();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // ── Socket events ───────────────────────────────────────────────────────
   useEffect(() => {
     socket.on("room:created", (r: RoomState) => {
       setRoom(r);
@@ -57,69 +135,76 @@ export default function Host() {
     });
     socket.on("turn:start", (t: { player: string; wallet: string }) => {
       setCurrentTurn(t);
-      addLog(`${t.player}'s turn to sing`);
+      addLog(`${t.player}'s turn — recording`);
+      void startRecording();
     });
-    socket.on("room:updated", (r: RoomState) => setRoom(r));
-    socket.on("game:over", (r: RoomState) => {
-      setRoom(r);
-      setPhase("finished");
-      const winner = r.players.find((p) => p.wallet === r.winner);
-      addLog(r.winner ? `${winner?.name ?? "?"} wins!` : "Tie!");
+    socket.on("game:over", () => {
+      // Server's tally is bogus (we pushed 0s to drive state); ignore it.
+      // The real result arrives from POST /api/match/finish below.
     });
     socket.on("error", ({ msg }: { msg: string }) => addLog(`Error: ${msg}`));
 
     return () => { socket.removeAllListeners(); };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [socket, phase]);
 
+  // ── Anchor program (laptop signs create_match + stake_p1 only) ──────────
   const getProgram = useCallback(() => {
     if (!wallet.wallet?.adapter || !wallet.publicKey) throw new Error("Wallet not connected");
     const provider = new AnchorProvider(connection, wallet.wallet.adapter as any, { commitment: "confirmed" });
     return new Program(IDL as any, provider);
   }, [wallet, connection]);
 
-  const createRoom = useCallback(async () => {
+  // ── Lobby → create socket room ──────────────────────────────────────────
+  const createRoom = useCallback(() => {
     if (!wallet.publicKey) return;
+    if (!selectedSongId) { addLog("Pick a song first"); return; }
     setBusy(true);
     const stake = Math.floor(parseFloat(stakeSOL) * LAMPORTS_PER_SOL);
-    addLog("Creating room…");
-    try {
-      // Create Solana escrow match (P2 wallet unknown yet — use placeholder, updated on join)
-      // For MVP: create the room on the server first, then we'll create the on-chain match
-      // when P2 joins so we know their pubkey. For now emit to server.
-      socket.emit("room:create", { wallet: wallet.publicKey.toBase58(), stake });
-    } catch (e: any) {
-      addLog("Error: " + e.message);
-    }
+    addLog(`Creating room (song: ${selectedSongId})…`);
+    socket.emit("room:create", { wallet: wallet.publicKey.toBase58(), stake });
     setBusy(false);
-  }, [wallet.publicKey, stakeSOL, socket]);
+  }, [wallet.publicKey, stakeSOL, socket, selectedSongId]);
 
+  // ── Start game: create on-chain match + stake P1, then kick off turns ───
   const startGame = useCallback(async () => {
-    if (!room) return;
+    if (!room || !wallet.publicKey) return;
+    if (!oracle) { addLog("Oracle pubkey not loaded yet — wait for backend"); return; }
+    if (!selectedSongId) { addLog("Pick a song first"); return; }
     setBusy(true);
     addLog("Creating escrow on-chain…");
     try {
+      const programId = new PublicKey(oracle.program_id);
+      const treasury  = new PublicKey(oracle.treasury_pubkey);
+      const oraclePk  = new PublicKey(oracle.oracle_pubkey);
       const program = getProgram();
       const matchId = room.code;
+      matchIdRef.current = matchId;
       const p2Wallet = new PublicKey(room.players[1].wallet);
-      const mPda = matchPda(matchId);
-      const vPda = vaultPda(matchId);
-      const stake = room.stake;
-
-      // Airdrop oracle for signing
-      const sig = await connection.requestAirdrop(oracleKp.publicKey, 0.1 * LAMPORTS_PER_SOL);
-      await connection.confirmTransaction(sig);
+      const mPda = matchPda(matchId, programId);
+      const vPda = vaultPda(matchId, programId);
 
       await program.methods
-        .createMatch(matchId, new BN(stake), p2Wallet, oracleKp.publicKey, TREASURY, FEE_BPS)
-        .accounts({ playerOne: wallet.publicKey!, matchAccount: mPda, vault: vPda, systemProgram: SystemProgram.programId })
+        .createMatch(matchId, new BN(room.stake), p2Wallet, oraclePk, treasury, FEE_BPS)
+        .accounts({
+          playerOne: wallet.publicKey,
+          matchAccount: mPda,
+          vault: vPda,
+          systemProgram: SystemProgram.programId,
+        })
         .rpc();
       addLog("Escrow created. Staking P1…");
 
       await program.methods
         .stake(matchId)
-        .accounts({ signer: wallet.publicKey!, matchAccount: mPda, vault: vPda, systemProgram: SystemProgram.programId })
+        .accounts({
+          signer: wallet.publicKey,
+          matchAccount: mPda,
+          vault: vPda,
+          systemProgram: SystemProgram.programId,
+        })
         .rpc();
-      addLog("P1 staked. Waiting for P2 to stake…");
+      addLog("P1 staked. Waiting for P2 to stake (auto-mock in this demo)…");
 
       socket.emit("match:set_id", { code: room.code, matchId });
       socket.emit("game:start", { code: room.code });
@@ -127,48 +212,97 @@ export default function Host() {
       addLog("Error: " + e.message);
     }
     setBusy(false);
-  }, [room, getProgram, wallet.publicKey, connection, socket]);
+  }, [room, wallet.publicKey, oracle, selectedSongId, getProgram, socket]);
 
-  // Simulate scoring for demo (real: mic recording + /api/score)
-  const submitMockScore = useCallback(() => {
-    if (!room || !currentTurn || !wallet.publicKey) return;
-    const score = Math.floor(60 + Math.random() * 40); // 60-100
-    addLog(`${currentTurn.player} score: ${score}/100`);
-    socket.emit("score:submit", { code: room.code, wallet: currentTurn.wallet, score });
-    setCurrentTurn(null);
-  }, [room, currentTurn, wallet.publicKey, socket]);
-
-  // Settle on-chain after game over
-  const settle = useCallback(async () => {
-    if (!room?.winner || !room.matchId) return;
-    setBusy(true);
-    addLog("Settling on-chain…");
+  // ── Mic capture ─────────────────────────────────────────────────────────
+  async function startRecording() {
+    if (recorderRef.current && recorderRef.current.state === "recording") return;
     try {
-      const program = getProgram();
-      const mPda = matchPda(room.matchId);
-      const vPda = vaultPda(room.matchId);
-      await program.methods
-        .settle(room.matchId, new PublicKey(room.winner))
-        .accounts({
-          oracle: oracleKp.publicKey,
-          matchAccount: mPda,
-          vault: vPda,
-          winnerAccount: new PublicKey(room.winner),
-          treasury: TREASURY,
-          systemProgram: SystemProgram.programId,
-        })
-        .signers([oracleKp])
-        .rpc();
-      addLog("Settled! Winner paid.");
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const rec = new MediaRecorder(stream, { mimeType: pickMime() });
+      chunksRef.current = [];
+      rec.ondataavailable = (ev) => { if (ev.data.size) chunksRef.current.push(ev.data); };
+      rec.start(250);
+      recorderRef.current = rec;
     } catch (e: any) {
-      addLog("Error: " + e.message);
+      addLog(`mic error: ${e.message}`);
     }
-    setBusy(false);
-  }, [room, getProgram]);
+  }
 
-  const joinUrl = room
-    ? `${window.location.origin}/play?code=${room.code}`
+  function stopRecording(): Promise<Blob | null> {
+    const rec = recorderRef.current;
+    if (!rec || rec.state === "inactive") return Promise.resolve(null);
+    return new Promise((resolve) => {
+      rec.onstop = () => {
+        const blob = new Blob(chunksRef.current, { type: rec.mimeType || "audio/webm" });
+        rec.stream.getTracks().forEach((t) => t.stop());
+        recorderRef.current = null;
+        chunksRef.current = [];
+        resolve(blob);
+      };
+      rec.stop();
+    });
+  }
+
+  // ── End turn: stop recording, advance server state, finish on P2 ───────
+  const endTurn = useCallback(async () => {
+    if (!room || !currentTurn) return;
+    const playerKey = currentTurn.player === "P1" ? "p1" : "p2";
+    addLog(`Stopping ${currentTurn.player} recording…`);
+    const blob = await stopRecording();
+    if (blob) takesRef.current[playerKey] = blob;
+    setCurrentTurn(null);
+
+    // Advance server state — we push a placeholder score and override at the end.
+    socket.emit("score:submit", {
+      code: room.code,
+      wallet: currentTurn.wallet,
+      score: 0,
+    });
+
+    // After P2 finishes, we have both takes — call /api/match/finish.
+    if (playerKey === "p2" && takesRef.current.p1 && takesRef.current.p2) {
+      void finishMatch();
+    }
+  }, [room, currentTurn, socket]);
+
+  const finishMatch = useCallback(async () => {
+    if (!room || !matchIdRef.current) return;
+    setPhase("scoring");
+    addLog("Scoring both takes on the backend…");
+
+    const fd = new FormData();
+    fd.append("match_id", matchIdRef.current);
+    fd.append("song_id", selectedSongId);
+    fd.append("p1_pubkey", room.players[0].wallet);
+    fd.append("p2_pubkey", room.players[1].wallet);
+    fd.append("stake_lamports", String(room.stake));
+    fd.append("fee_bps", String(FEE_BPS));
+    fd.append("take_p1", takesRef.current.p1!, "p1.webm");
+    fd.append("take_p2", takesRef.current.p2!, "p2.webm");
+
+    try {
+      const r = await fetch(`${API_BASE}/api/match/finish`, { method: "POST", body: fd });
+      if (!r.ok) throw new Error(`HTTP ${r.status}: ${await r.text()}`);
+      const result: FinishResponse = await r.json();
+      setFinish(result);
+      setPhase("finished");
+      addLog(`Result: ${result.winner.toUpperCase()} | payout_tx=${result.payout_tx}`);
+
+      // Broadcast to phones so the Player UI shows the real winner.
+      socket.emit("match:finished", { code: room.code, ...result });
+    } catch (e: any) {
+      addLog("finish error: " + e.message);
+      setPhase("finished");
+    }
+  }, [room, selectedSongId, socket]);
+
+  const joinUrl = room ? `${window.location.origin}/play?code=${room.code}` : null;
+  const winnerWallet =
+    finish?.winner === "p1" ? room?.players[0].wallet
+    : finish?.winner === "p2" ? room?.players[1].wallet
     : null;
+  const scoreFor = (idx: 0 | 1) => finish?.scores[idx]?.score ?? null;
 
   return (
     <div style={styles.root}>
@@ -179,11 +313,29 @@ export default function Host() {
           <WalletMultiButton />
         </div>
 
-        {/* Lobby — create room */}
+        {/* Lobby */}
         {phase === "lobby" && (
           <div style={styles.card}>
             <div style={styles.cardTitle}>Create a Game</div>
+
             <div style={{ marginTop: 12 }}>
+              <label style={styles.label}>Song</label>
+              <select
+                style={styles.input}
+                value={selectedSongId}
+                onChange={(e) => setSelectedSongId(e.target.value)}
+                disabled={songs.length === 0}
+              >
+                {songs.length === 0 && <option>Loading…</option>}
+                {songs.map((s) => (
+                  <option key={s.song_id} value={s.song_id}>
+                    {s.title} — {s.artist} (diff {s.difficulty})
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div>
               <label style={styles.label}>Wager (SOL)</label>
               <input
                 style={styles.input}
@@ -194,13 +346,25 @@ export default function Host() {
                 onChange={(e) => setStakeSOL(e.target.value)}
               />
             </div>
-            <Btn onClick={createRoom} busy={busy} disabled={!wallet.publicKey}>
+
+            {oracle && (
+              <div style={{ ...styles.label, marginBottom: 8 }}>
+                Backend oracle: <span style={styles.mono}>{oracle.oracle_pubkey.slice(0, 16)}…</span>
+                {" "}({oracle.escrow_mode})
+              </div>
+            )}
+
+            <Btn
+              onClick={createRoom}
+              busy={busy}
+              disabled={!wallet.publicKey || !selectedSongId}
+            >
               {wallet.publicKey ? "Create Room" : "Connect Wallet First"}
             </Btn>
           </div>
         )}
 
-        {/* Waiting — show code, wait for P2 */}
+        {/* Waiting */}
         {phase === "waiting" && room && (
           <div style={styles.card}>
             <div style={styles.cardTitle}>Share the Code</div>
@@ -221,7 +385,7 @@ export default function Host() {
             ))}
             {room.players.length === 2 && (
               <Btn onClick={startGame} busy={busy} color="#8b5cf6" style={{ marginTop: 16 }}>
-                Start Game & Lock Wagers
+                Start Game &amp; Lock Wagers
               </Btn>
             )}
           </div>
@@ -231,48 +395,87 @@ export default function Host() {
         {phase === "gaming" && room && (
           <div style={styles.card}>
             <div style={styles.cardTitle}>
-              {currentTurn ? `${currentTurn.player} is Singing…` : "Get Ready"}
+              {currentTurn ? `🔴 ${currentTurn.player} singing…` : "Get Ready"}
             </div>
             {currentTurn && (
               <>
                 <div style={{ color: "#9ca3af", fontSize: 13, margin: "12px 0" }}>
-                  {currentTurn.wallet.slice(0, 10)}… — sing your heart out!
+                  {currentTurn.wallet.slice(0, 10)}… — recording from this laptop's mic
                 </div>
-                <Btn onClick={submitMockScore} busy={false} color="#4ade80">
-                  Submit Score (mock)
+                <Btn onClick={endTurn} busy={false} color="#4ade80">
+                  End {currentTurn.player} Turn
                 </Btn>
               </>
             )}
-            <div style={{ marginTop: 20 }}>
-              {room.players.map((p) => (
-                <div key={p.wallet} style={styles.playerRow}>
-                  {p.name}: {p.score !== null ? `${p.score}/100` : "—"}
-                </div>
-              ))}
+            <div style={{ marginTop: 20, ...styles.label }}>Song: {selectedSongId}</div>
+          </div>
+        )}
+
+        {/* Scoring */}
+        {phase === "scoring" && (
+          <div style={styles.card}>
+            <div style={styles.cardTitle}>Scoring…</div>
+            <div style={{ color: "#9ca3af", fontSize: 13, marginTop: 8 }}>
+              Backend is running pyin on both takes. Hold tight.
             </div>
           </div>
         )}
 
         {/* Finished */}
-        {phase === "finished" && room && (
+        {phase === "finished" && room && finish && (
           <div style={styles.card}>
             <div style={styles.cardTitle}>Game Over</div>
-            {room.players.map((p) => (
-              <div
-                key={p.wallet}
-                style={{
-                  ...styles.playerRow,
-                  color: p.wallet === room.winner ? "#4ade80" : "#fff",
-                  fontWeight: p.wallet === room.winner ? 700 : 400,
-                }}
+            {room.players.map((p, i) => {
+              const s = scoreFor(i as 0 | 1);
+              const isWinner = p.wallet === winnerWallet;
+              return (
+                <div
+                  key={p.wallet}
+                  style={{
+                    ...styles.playerRow,
+                    color: isWinner ? "#4ade80" : "#fff",
+                    fontWeight: isWinner ? 700 : 400,
+                  }}
+                >
+                  {isWinner ? "🏆 " : ""}{p.name}: {s ?? "—"}/100
+                </div>
+              );
+            })}
+
+            <div style={{ marginTop: 16, color: "#e5e7eb", fontSize: 14, fontStyle: "italic" }}>
+              "{finish.commentary}"
+            </div>
+
+            {finish.mc_audio_url && (
+              <audio
+                controls
+                autoPlay
+                src={`${API_BASE}${finish.mc_audio_url}`}
+                style={{ marginTop: 12, width: "100%" }}
+              />
+            )}
+
+            <div style={{ ...styles.label, marginTop: 16 }}>Payout</div>
+            <div style={styles.mono}>{finish.payout_tx}</div>
+            {finish.payout_tx.length > 50 && oracle?.escrow_mode === "devnet" && (
+              <a
+                href={`https://explorer.solana.com/tx/${finish.payout_tx}?cluster=devnet`}
+                target="_blank" rel="noreferrer"
+                style={{ color: "#60a5fa", fontSize: 12 }}
               >
-                {p.wallet === room.winner ? "🏆 " : ""}{p.name}: {p.score}/100
-              </div>
-            ))}
-            {room.winner && (
-              <Btn onClick={settle} busy={busy} color="#8b5cf6" style={{ marginTop: 16 }}>
-                Pay Winner on Solana
-              </Btn>
+                view on explorer ↗
+              </a>
+            )}
+
+            {finish.leaderboard?.length > 0 && (
+              <>
+                <div style={{ ...styles.label, marginTop: 16 }}>Leaderboard</div>
+                {finish.leaderboard.slice(0, 5).map((row, i) => (
+                  <div key={i} style={styles.playerRow}>
+                    {row.player}: {row.wins}W / {row.losses}L
+                  </div>
+                ))}
+              </>
             )}
           </div>
         )}
@@ -290,7 +493,15 @@ export default function Host() {
   );
 }
 
-// ─── Styles ───────────────────────────────────────────────────────────────────
+// ─── Helpers ─────────────────────────────────────────────────────────────────
+function pickMime(): string {
+  const candidates = ["audio/webm;codecs=opus", "audio/webm", "audio/ogg;codecs=opus", "audio/mp4"];
+  for (const m of candidates) {
+    if (typeof MediaRecorder !== "undefined" && MediaRecorder.isTypeSupported(m)) return m;
+  }
+  return "";
+}
+
 const styles: Record<string, React.CSSProperties> = {
   root: { minHeight: "100vh", background: "#0a0a0a", color: "#fff", fontFamily: "system-ui, sans-serif", padding: 24 },
   inner: { maxWidth: 560, margin: "0 auto" },
@@ -299,6 +510,7 @@ const styles: Record<string, React.CSSProperties> = {
   card: { background: "#111", border: "1px solid #222", borderRadius: 12, padding: 20, marginBottom: 12 },
   cardTitle: { fontSize: 16, fontWeight: 600, marginBottom: 8, color: "#e5e7eb" },
   label: { color: "#6b7280", fontSize: 11, textTransform: "uppercase" as const, letterSpacing: 1 },
+  mono: { fontFamily: "monospace", fontSize: 12, wordBreak: "break-all" as const, color: "#e5e7eb" },
   bigCode: { fontSize: 64, fontWeight: 900, letterSpacing: 12, textAlign: "center" as const, color: "#facc15", padding: "20px 0" },
   input: { display: "block", width: "100%", background: "#1a1a1a", border: "1px solid #333", borderRadius: 6, padding: "8px 12px", color: "#fff", fontSize: 16, marginTop: 4, marginBottom: 16 },
   playerRow: { padding: "6px 0", borderBottom: "1px solid #1a1a1a", fontSize: 14, fontFamily: "monospace" },

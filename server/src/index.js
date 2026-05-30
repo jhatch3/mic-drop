@@ -103,6 +103,27 @@ io.on("connection", (socket) => {
     }
   });
 
+  // ── match:finished ───────────────────────────────────────────────────────
+  // Host sends the real FinishResponse after /api/match/finish returns. We
+  // overwrite room.players[i].score + room.winner with the authoritative pitch
+  // scores (server's own score:submit-driven values were placeholders) and
+  // broadcast so the phones can render the real result.
+  socket.on("match:finished", (payload = {}) => {
+    const { code, scores = [], winner, payout_tx, mc_audio_url, commentary } = payload;
+    const room = getRoom(code);
+    if (!room) return;
+    if (Array.isArray(scores) && room.players.length === scores.length) {
+      room.players.forEach((p, i) => { p.score = scores[i]?.score ?? p.score; });
+    }
+    if (winner === "p1") room.winner = room.players[0]?.wallet ?? null;
+    else if (winner === "p2") room.winner = room.players[1]?.wallet ?? null;
+    else room.winner = null;
+    broadcast(code?.toUpperCase(), "match:finished", {
+      room: publicRoom(room),
+      winner, payout_tx, mc_audio_url, commentary,
+    });
+  });
+
   // ── disconnect ───────────────────────────────────────────────────────────
   socket.on("disconnect", () => {
     const room = getRoomBySocket(socket.id);
