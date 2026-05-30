@@ -1,3 +1,6 @@
+# Stream B: copyrighted source audio (not committed)
+tools/prep/sources/
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[codz]

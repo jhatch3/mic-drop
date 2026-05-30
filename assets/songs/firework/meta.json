@@ -1,0 +1,9 @@
+{
+  "song_id": "firework",
+  "title": "Firework",
+  "artist": "Katy Perry",
+  "difficulty": 3,
+  "duration_sec": 50.0,
+  "segment_start_sec": 70.0,
+  "segment_end_sec": 120.0
+}
