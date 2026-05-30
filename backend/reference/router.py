@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import asyncio
 
-from fastapi import APIRouter, File, HTTPException, UploadFile
+from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 
 from common.audio import DEFAULT_SR, AudioDecodeError, load_audio
 from common.pitch import HOP, contour_from_audio

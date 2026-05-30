@@ -1,8 +1,8 @@
 """POST /api/score — authoritative scoring endpoint."""
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 
-from ..data.songs_store import get_contour
-from .scorer import score_take
+from data.songs_store import get_contour
+from scoring.scorer import score_take
 
 router = APIRouter()
 
