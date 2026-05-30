@@ -5,7 +5,6 @@ interface LyricLine { t: number; end: number; text: string; }
 interface ContourFrame { t: number; midi: number | null; voiced: boolean; }
 interface Word { word: string; start: number; end: number; }
 
-// Split a lyric line into words with linearly interpolated timestamps
 function wordsForLine(line: LyricLine): Word[] {
   const tokens = line.text.split(/\s+/).filter(Boolean);
   const dur = line.end - line.t;
@@ -24,12 +23,12 @@ const SONG = {
   artist:  "Katy Perry",
 };
 
-// ─── Pitch detection (autocorrelation, ported from backend/common/pitch.py) ──
-const SR        = 44100; // browser AudioContext default
-const FMIN      = 65;    // C2 Hz
-const FMAX      = 1000;  // B5 Hz
-const RMS_GATE  = 0.003;
-const CONF_MIN  = 0.5;
+// ─── Pitch detection ──────────────────────────────────────────────────────────
+const SR = 44100;
+const FMIN = 65;
+const FMAX = 1000;
+const RMS_GATE = 0.003;
+const CONF_MIN = 0.5;
 
 function detectPitch(buf: Float32Array): { midi: number | null; conf: number } {
   const n = buf.length;
@@ -37,70 +36,69 @@ function detectPitch(buf: Float32Array): { midi: number | null; conf: number } {
   for (let i = 0; i < n; i++) rms += buf[i] * buf[i];
   rms = Math.sqrt(rms / n);
   if (rms < RMS_GATE) return { midi: null, conf: 0 };
-
   const minLag = Math.floor(SR / FMAX);
   const maxLag = Math.min(n - 1, Math.floor(SR / FMIN));
-
-  // Autocorrelation
   let best = -1, bestVal = -Infinity;
   for (let lag = minLag; lag <= maxLag; lag++) {
     let sum = 0;
     for (let i = 0; i < n - lag; i++) sum += buf[i] * buf[i + lag];
     if (sum > bestVal) { bestVal = sum; best = lag; }
   }
-
   let norm = 0;
   for (let i = 0; i < n; i++) norm += buf[i] * buf[i];
   const conf = norm > 0 ? bestVal / norm : 0;
   if (conf < CONF_MIN || best <= 0) return { midi: null, conf };
-
-  const f0 = SR / best;
-  const midi = 69 + 12 * Math.log2(f0 / 440);
-  return { midi, conf };
+  return { midi: 69 + 12 * Math.log2((SR / best) / 440), conf };
 }
 
-// Draw the side-by-side pitch graph on a canvas
+function centsError(singer: number, target: number) {
+  const diff = singer - target;
+  return (diff - 12 * Math.round(diff / 12)) * 100;
+}
+
+// ─── Pitch graph ──────────────────────────────────────────────────────────────
 function drawGraph(
   canvas: HTMLCanvasElement | null,
   points: { t: number; target: number | null; singer: number | null }[],
   now: number,
-  window: number,
+  win: number,
 ) {
   if (!canvas) return;
   const ctx = canvas.getContext("2d");
   if (!ctx) return;
-  const { width: W, height: H } = canvas;
-
+  const W = canvas.width, H = canvas.height;
   ctx.clearRect(0, 0, W, H);
 
-  // Background
-  ctx.fillStyle = "#0d0d0d";
+  ctx.fillStyle = "#080810";
   ctx.fillRect(0, 0, W, H);
 
-  // Grid lines every semitone
-  const MIDI_MIN = 48; // C3
-  const MIDI_MAX = 84; // C6
+  const MIDI_MIN = 48, MIDI_MAX = 84;
   const midiToY = (m: number) => H - ((m - MIDI_MIN) / (MIDI_MAX - MIDI_MIN)) * H;
-  const tToX    = (t: number) => ((t - (now - window)) / window) * W;
+  const tToX    = (t: number) => ((t - (now - win)) / win) * W;
 
-  ctx.strokeStyle = "#1a1a1a";
+  // Grid
+  ctx.strokeStyle = "#ffffff08";
   ctx.lineWidth = 1;
-  for (let m = MIDI_MIN; m <= MIDI_MAX; m += 2) {
+  for (let m = MIDI_MIN; m <= MIDI_MAX; m += 3) {
     const y = midiToY(m);
     ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(W, y); ctx.stroke();
+    // Note labels
+    const name = NOTE_NAMES[m % 12];
+    if (name && !name.includes("#")) {
+      ctx.fillStyle = "#ffffff18";
+      ctx.font = "10px monospace";
+      ctx.fillText(name + Math.floor(m / 12 - 1), 4, y - 2);
+    }
   }
 
-  // Now line
-  ctx.strokeStyle = "#ffffff18";
-  ctx.lineWidth = 1;
-  ctx.setLineDash([4, 4]);
-  ctx.beginPath(); ctx.moveTo(W, 0); ctx.lineTo(W, H); ctx.stroke();
-  ctx.setLineDash([]);
-
-  // Target trace (purple)
+  // Target — thick glowing purple
+  ctx.save();
+  ctx.shadowColor = "#a78bfa88";
+  ctx.shadowBlur = 8;
   ctx.strokeStyle = "#a78bfa";
-  ctx.lineWidth = 3;
+  ctx.lineWidth = 4;
   ctx.lineJoin = "round";
+  ctx.lineCap = "round";
   ctx.beginPath();
   let started = false;
   for (const p of points) {
@@ -109,10 +107,16 @@ function drawGraph(
     if (!started) { ctx.moveTo(x, y); started = true; } else ctx.lineTo(x, y);
   }
   ctx.stroke();
+  ctx.restore();
 
-  // Singer trace (yellow)
+  // Singer — glowing yellow
+  ctx.save();
+  ctx.shadowColor = "#facc1588";
+  ctx.shadowBlur = 10;
   ctx.strokeStyle = "#facc15";
-  ctx.lineWidth = 2.5;
+  ctx.lineWidth = 3;
+  ctx.lineJoin = "round";
+  ctx.lineCap = "round";
   ctx.beginPath();
   started = false;
   for (const p of points) {
@@ -121,111 +125,88 @@ function drawGraph(
     if (!started) { ctx.moveTo(x, y); started = true; } else ctx.lineTo(x, y);
   }
   ctx.stroke();
+  ctx.restore();
 
   // Legend
-  ctx.font = "11px system-ui";
-  ctx.fillStyle = "#a78bfa";
-  ctx.fillText("▬ Target", 8, 16);
-  ctx.fillStyle = "#facc15";
-  ctx.fillText("▬ You", 8, 30);
-}
-
-// Octave-folded cents error (from CLAUDE.md spec)
-function centsError(singer: number, target: number): number {
-  const diff = singer - target;
-  return (diff - 12 * Math.round(diff / 12)) * 100;
+  ctx.font = "bold 11px system-ui";
+  ctx.fillStyle = "#a78bfa"; ctx.fillText("● Target", 10, H - 20);
+  ctx.fillStyle = "#facc15"; ctx.fillText("● You",    10, H - 6);
 }
 
 // ─── Component ────────────────────────────────────────────────────────────────
 export default function Karaoke() {
-  const [lines, setLines]       = useState<LyricLine[]>([]);
-  const [contour, setContour]   = useState<ContourFrame[]>([]);
+  const [lines, setLines]         = useState<LyricLine[]>([]);
+  const [contour, setContour]     = useState<ContourFrame[]>([]);
   const [activeIdx, setActiveIdx] = useState(-1);
-  const [playing, setPlaying]   = useState(false);
-  const [micOn, setMicOn]       = useState(false);
-  const [score, setScore]       = useState(0);
-  const [hits, setHits]         = useState(0);
-  const [scored, setScored]     = useState(0);
-  const [liveMidi, setLiveMidi] = useState<number | null>(null);
+  const [playing, setPlaying]     = useState(false);
+  const [micOn, setMicOn]         = useState(false);
+  const [score, setScore]         = useState(0);
+  const [hits, setHits]           = useState(0);
+  const [scored, setScored]       = useState(0);
+  const [liveMidi, setLiveMidi]   = useState<number | null>(null);
   const [targetMidi, setTargetMidi] = useState<number | null>(null);
+  const [currentTime, setCurrentTime] = useState(0);
 
-  const audioRef    = useRef<HTMLAudioElement>(null);
-  const rafRef      = useRef<number>(0);
+  const audioRef      = useRef<HTMLAudioElement>(null);
+  const rafRef        = useRef<number>(0);
   const activeLyricRef = useRef<HTMLDivElement>(null);
-  const ctxRef      = useRef<AudioContext | null>(null);
-  const analyserRef = useRef<AnalyserNode | null>(null);
-  const streamRef   = useRef<MediaStream | null>(null);
-  const hitsRef     = useRef(0);
-  const scoredRef   = useRef(0);
-  const canvasRef   = useRef<HTMLCanvasElement>(null);
-  // Rolling history for the graph: [{ t, target, singer }]
-  const graphRef    = useRef<{ t: number; target: number | null; singer: number | null }[]>([]);
-  const GRAPH_WINDOW = 6; // seconds of history to show
+  const ctxRef        = useRef<AudioContext | null>(null);
+  const analyserRef   = useRef<AnalyserNode | null>(null);
+  const streamRef     = useRef<MediaStream | null>(null);
+  const hitsRef       = useRef(0);
+  const scoredRef     = useRef(0);
+  const canvasRef     = useRef<HTMLCanvasElement>(null);
+  const graphRef      = useRef<{ t: number; target: number | null; singer: number | null }[]>([]);
+  const GRAPH_WIN     = 6;
 
-  // Load assets
   useEffect(() => {
     fetch(SONG.lyrics).then(r => r.json()).then(d => setLines(d.lines));
     fetch(SONG.contour).then(r => r.json()).then(d => setContour(d.frames));
   }, []);
 
-  // Main RAF loop
   const tick = useCallback(() => {
     const audio = audioRef.current;
     if (!audio) return;
     const t = audio.currentTime;
-
-    // Active lyric line
-    setActiveIdx(prev => {
+    setCurrentTime(t);
+    setActiveIdx(() => {
       const idx = lines.findIndex(l => t >= l.t && t < l.end);
-      return idx === -1 ? prev : idx;
+      return idx === -1 ? -1 : idx;
     });
 
-    // Live pitch vs contour
     if (analyserRef.current && contour.length > 0) {
       const buf = new Float32Array(analyserRef.current.fftSize);
       analyserRef.current.getFloatTimeDomainData(buf);
       const { midi, conf } = detectPitch(buf);
       setLiveMidi(midi);
 
-      // Find target frame (nearest voiced frame within ±30ms)
       const target = contour.find(f => f.voiced && f.midi !== null && Math.abs(f.t - t) <= 0.03) ?? null;
       setTargetMidi(target?.midi ?? null);
 
-      if (target && target.midi !== null) {
-        scoredRef.current += 1;
-        if (midi !== null && conf >= CONF_MIN) {
-          const err = centsError(midi, target.midi);
-          if (Math.abs(err) <= 50) hitsRef.current += 1;
+      if (target?.midi != null) {
+        scoredRef.current++;
+        if (midi !== null && conf >= CONF_MIN && Math.abs(centsError(midi, target.midi)) <= 50) {
+          hitsRef.current++;
         }
-        const pct = scoredRef.current > 0
-          ? Math.round(100 * hitsRef.current / scoredRef.current)
-          : 0;
         setHits(hitsRef.current);
         setScored(scoredRef.current);
-        setScore(pct);
+        setScore(Math.round(100 * hitsRef.current / scoredRef.current));
       }
 
-      // Push to graph history and draw
       graphRef.current.push({ t, target: target?.midi ?? null, singer: midi });
-      // Trim to window
-      const cutoff = t - GRAPH_WINDOW;
-      graphRef.current = graphRef.current.filter(p => p.t >= cutoff);
-      drawGraph(canvasRef.current, graphRef.current, t, GRAPH_WINDOW);
+      graphRef.current = graphRef.current.filter(p => p.t >= t - GRAPH_WIN);
+      drawGraph(canvasRef.current, graphRef.current, t, GRAPH_WIN);
     }
 
     rafRef.current = requestAnimationFrame(tick);
   }, [lines, contour]);
 
   useEffect(() => {
-    if (playing) {
-      rafRef.current = requestAnimationFrame(tick);
-    } else {
-      cancelAnimationFrame(rafRef.current);
-    }
+    if (playing) rafRef.current = requestAnimationFrame(tick);
+    else cancelAnimationFrame(rafRef.current);
     return () => cancelAnimationFrame(rafRef.current);
   }, [playing, tick]);
 
-  // Scroll active lyric into view
   useEffect(() => {
     activeLyricRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
   }, [activeIdx]);
@@ -235,11 +216,11 @@ export default function Karaoke() {
     streamRef.current = stream;
     const ctx = new AudioContext({ sampleRate: SR });
     ctxRef.current = ctx;
-    const source = ctx.createMediaStreamSource(stream);
-    const analyser = ctx.createAnalyser();
-    analyser.fftSize = 2048;
-    source.connect(analyser);
-    analyserRef.current = analyser;
+    const src = ctx.createMediaStreamSource(stream);
+    const an  = ctx.createAnalyser();
+    an.fftSize = 2048;
+    src.connect(an);
+    analyserRef.current = an;
     setMicOn(true);
   }, []);
 
@@ -253,10 +234,8 @@ export default function Karaoke() {
   const togglePlay = useCallback(async () => {
     const audio = audioRef.current;
     if (!audio) return;
-    if (playing) {
-      audio.pause();
-      setPlaying(false);
-    } else {
+    if (playing) { audio.pause(); setPlaying(false); }
+    else {
       if (!micOn) await startMic();
       await audio.play();
       setPlaying(true);
@@ -267,9 +246,9 @@ export default function Karaoke() {
     const audio = audioRef.current;
     if (!audio) return;
     audio.currentTime = 0;
-    hitsRef.current = 0;
-    scoredRef.current = 0;
-    setHits(0); setScored(0); setScore(0); setActiveIdx(-1);
+    hitsRef.current = 0; scoredRef.current = 0;
+    graphRef.current = [];
+    setHits(0); setScored(0); setScore(0); setActiveIdx(-1); setCurrentTime(0);
     if (!micOn) await startMic();
     await audio.play();
     setPlaying(true);
@@ -277,15 +256,9 @@ export default function Karaoke() {
 
   useEffect(() => () => { stopMic(); cancelAnimationFrame(rafRef.current); }, [stopMic]);
 
-  // Score colour
   const scoreColor = score >= 80 ? "#4ade80" : score >= 50 ? "#facc15" : "#f87171";
-
-  // Pitch indicator
-  const midiLabel = (m: number | null) =>
-    m !== null ? `${noteFromMidi(m)} (${m.toFixed(1)})` : "—";
-
   const audio = audioRef.current;
-  const progress = audio?.duration ? (audio.currentTime / audio.duration) * 100 : 0;
+  const progress = audio?.duration ? (currentTime / audio.duration) * 100 : 0;
 
   return (
     <div style={s.root}>
@@ -298,56 +271,55 @@ export default function Karaoke() {
           <div style={s.songArtist}>{SONG.artist}</div>
         </div>
         <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-          {micOn && <div style={s.micPill}>🎤 Mic on</div>}
-          <Btn onClick={restart}>↺ Restart</Btn>
-          <Btn onClick={togglePlay} primary>{playing ? "⏸ Pause" : "▶ Sing"}</Btn>
+          {micOn && <span style={s.micPill}>🎤 Live</span>}
+          <button onClick={restart} style={s.btnGhost}>↺</button>
+          <button onClick={togglePlay} style={s.btnPrimary}>
+            {playing ? "⏸ Pause" : "▶ Sing"}
+          </button>
         </div>
       </div>
 
-      {/* Progress bar */}
+      {/* Progress */}
       <div style={s.progressTrack}>
         <div style={{ ...s.progressFill, width: `${progress}%` }} />
       </div>
 
-      {/* Score + pitch HUD */}
+      {/* HUD */}
       <div style={s.hud}>
         <div style={s.hudCard}>
           <div style={s.hudLabel}>Score</div>
-          <div style={{ ...s.hudValue, color: scoreColor, fontSize: 36 }}>{score}</div>
-          <div style={{ color: "#6b7280", fontSize: 11 }}>{hits}/{scored} hits</div>
+          <div style={{ fontSize: 42, fontWeight: 900, color: scoreColor, lineHeight: 1 }}>{score}</div>
+          <div style={{ color: "#4b5563", fontSize: 11, marginTop: 2 }}>{hits}/{scored} hits</div>
         </div>
         <div style={s.hudCard}>
-          <div style={s.hudLabel}>You're singing</div>
-          <div style={{ ...s.hudValue, color: liveMidi ? "#60a5fa" : "#6b7280" }}>
-            {midiLabel(liveMidi)}
+          <div style={s.hudLabel}>You</div>
+          <div style={{ fontSize: 22, fontWeight: 700, color: liveMidi ? "#facc15" : "#374151", fontFamily: "monospace" }}>
+            {liveMidi ? noteFromMidi(liveMidi) : "—"}
           </div>
+          <div style={{ color: "#4b5563", fontSize: 11 }}>{liveMidi ? liveMidi.toFixed(1) : "silent"}</div>
         </div>
         <div style={s.hudCard}>
-          <div style={s.hudLabel}>Target note</div>
-          <div style={{ ...s.hudValue, color: targetMidi ? "#a78bfa" : "#6b7280" }}>
-            {midiLabel(targetMidi)}
+          <div style={s.hudLabel}>Target</div>
+          <div style={{ fontSize: 22, fontWeight: 700, color: targetMidi ? "#a78bfa" : "#374151", fontFamily: "monospace" }}>
+            {targetMidi ? noteFromMidi(targetMidi) : "—"}
           </div>
+          <div style={{ color: "#4b5563", fontSize: 11 }}>{targetMidi ? targetMidi.toFixed(1) : "rest"}</div>
         </div>
       </div>
 
       {/* Pitch graph */}
-      <div style={{ position: "relative" }}>
-        <canvas
-          ref={canvasRef}
-          width={800}
-          height={140}
-          style={{ width: "100%", height: 140, borderRadius: 10, border: "1px solid #1f1f1f", display: "block" }}
-        />
+      <div style={{ position: "relative", borderRadius: 12, overflow: "hidden", border: "1px solid #1a1a1a" }}>
+        <canvas ref={canvasRef} width={900} height={160} style={{ width: "100%", height: 160, display: "block" }} />
         {!playing && (
-          <div style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", color: "#555", fontSize: 13 }}>
-            Hit ▶ Sing to see your pitch vs. the target
+          <div style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", background: "#080810cc", color: "#4b5563", fontSize: 13, letterSpacing: 1 }}>
+            PITCH GRAPH — press Sing to begin
           </div>
         )}
       </div>
 
       {/* Lyrics */}
       <div style={s.lyricsBox}>
-        {lines.length === 0 && <div style={{ color: "#555" }}>Loading…</div>}
+        {lines.length === 0 && <div style={{ color: "#374151" }}>Loading…</div>}
         {lines.map((line, i) => {
           const isActive = i === activeIdx;
           const isPast   = i < activeIdx;
@@ -357,41 +329,41 @@ export default function Karaoke() {
               key={i}
               ref={isActive ? activeLyricRef : undefined}
               style={{
-                ...s.lyricLine,
-                fontSize:   isActive ? 32 : 20,
+                textAlign: "center",
+                fontSize:   isActive ? 34 : isPast ? 18 : 20,
                 fontWeight: isActive ? 800 : 400,
-                transform:  isActive ? "scale(1.05)" : "scale(1)",
-                transition: "all 0.15s ease",
+                transform:  isActive ? "scale(1.04)" : "scale(1)",
+                transition: "all 0.2s ease",
+                maxWidth: 680,
+                lineHeight: 1.2,
               }}
             >
               {isActive && words ? (
-                // Word-by-word fluid wipe for the active line
-                <span style={{ display: "flex", flexWrap: "wrap", justifyContent: "center", gap: "0 10px" }}>
+                <span style={{ display: "flex", flexWrap: "wrap", justifyContent: "center", gap: "0 12px" }}>
                   {words.map((w, wi) => {
-                    const ct = audioRef.current?.currentTime ?? 0;
-                    const progress = ct <= w.start ? 0
-                      : ct >= w.end ? 100
+                    const ct = currentTime;
+                    const pct = ct <= w.start ? 0 : ct >= w.end ? 100
                       : Math.round(((ct - w.start) / (w.end - w.start)) * 100);
                     return (
-                      <span
-                        key={wi}
-                        style={{
-                          background: `linear-gradient(to right, #facc15 ${progress}%, #9ca3af ${progress}%)`,
-                          WebkitBackgroundClip: "text",
-                          WebkitTextFillColor: "transparent",
-                          backgroundClip: "text",
-                          textShadow: "none",
-                          filter: progress > 0 ? `drop-shadow(0 0 8px #facc1566)` : "none",
-                          transition: "filter 0.1s",
-                        }}
-                      >
+                      // Double-span overlay: gray base, gold clip on top
+                      <span key={wi} style={{ position: "relative", display: "inline-block", color: "#6b7280" }}>
                         {w.word}
+                        <span style={{
+                          position: "absolute", left: 0, top: 0,
+                          color: "#facc15",
+                          overflow: "hidden",
+                          width: `${pct}%`,
+                          whiteSpace: "nowrap",
+                          textShadow: "0 0 12px #facc1566",
+                        }}>
+                          {w.word}
+                        </span>
                       </span>
                     );
                   })}
                 </span>
               ) : (
-                <span style={{ color: isPast ? "#2d3748" : "#6b7280" }}>{line.text}</span>
+                <span style={{ color: isPast ? "#1f2937" : "#4b5563" }}>{line.text}</span>
               )}
             </div>
           );
@@ -405,34 +377,21 @@ export default function Karaoke() {
 const NOTE_NAMES = ["C","C#","D","D#","E","F","F#","G","G#","A","A#","B"];
 function noteFromMidi(midi: number) {
   const n = Math.round(midi);
-  return NOTE_NAMES[n % 12] + Math.floor(n / 12 - 1);
-}
-
-function Btn({ onClick, children, primary }: { onClick: () => void; children: React.ReactNode; primary?: boolean }) {
-  return (
-    <button onClick={onClick} style={{
-      background: primary ? "#8b5cf6" : "#1f1f1f",
-      color: "#fff", border: "1px solid #333",
-      borderRadius: 8, padding: "8px 18px",
-      cursor: "pointer", fontSize: 14, fontWeight: 600,
-    }}>
-      {children}
-    </button>
-  );
+  return NOTE_NAMES[((n % 12) + 12) % 12] + Math.floor(n / 12 - 1);
 }
 
 const s: Record<string, React.CSSProperties> = {
-  root:        { minHeight: "100vh", background: "#050505", color: "#fff", fontFamily: "system-ui, sans-serif", display: "flex", flexDirection: "column", padding: "20px 24px", gap: 12 },
-  header:      { display: "flex", justifyContent: "space-between", alignItems: "center" },
-  songTitle:   { fontSize: 22, fontWeight: 800 },
-  songArtist:  { fontSize: 13, color: "#6b7280", marginTop: 2 },
-  progressTrack: { height: 4, background: "#1f1f1f", borderRadius: 2, overflow: "hidden" },
-  progressFill:  { height: "100%", background: "#8b5cf6", transition: "width 0.1s linear" },
-  hud:         { display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8 },
-  hudCard:     { background: "#111", border: "1px solid #222", borderRadius: 10, padding: "10px 14px", textAlign: "center" },
-  hudLabel:    { color: "#6b7280", fontSize: 10, textTransform: "uppercase", letterSpacing: 1, marginBottom: 4 },
-  hudValue:    { fontSize: 20, fontWeight: 700, fontFamily: "monospace" },
-  micPill:     { background: "#dc262633", color: "#f87171", border: "1px solid #f8717144", borderRadius: 20, padding: "4px 10px", fontSize: 12 },
-  lyricsBox:   { flex: 1, overflowY: "auto", display: "flex", flexDirection: "column", alignItems: "center", gap: 18, padding: "30px 0" },
-  lyricLine:   { textAlign: "center", lineHeight: 1.3, maxWidth: 640 },
+  root:          { minHeight: "100vh", background: "#030308", color: "#fff", fontFamily: "system-ui, sans-serif", display: "flex", flexDirection: "column", padding: "20px 28px", gap: 14 },
+  header:        { display: "flex", justifyContent: "space-between", alignItems: "center" },
+  songTitle:     { fontSize: 24, fontWeight: 900, letterSpacing: -0.5 },
+  songArtist:    { fontSize: 13, color: "#4b5563", marginTop: 3 },
+  progressTrack: { height: 3, background: "#111", borderRadius: 2, overflow: "hidden" },
+  progressFill:  { height: "100%", background: "linear-gradient(to right, #7c3aed, #a78bfa)", transition: "width 0.1s linear" },
+  hud:           { display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10 },
+  hudCard:       { background: "#0d0d18", border: "1px solid #1a1a2e", borderRadius: 12, padding: "12px 16px", textAlign: "center" },
+  hudLabel:      { color: "#374151", fontSize: 10, textTransform: "uppercase" as const, letterSpacing: 2, marginBottom: 6 },
+  micPill:       { background: "#dc262622", color: "#f87171", border: "1px solid #f8717133", borderRadius: 20, padding: "4px 12px", fontSize: 12 },
+  btnPrimary:    { background: "linear-gradient(135deg, #7c3aed, #8b5cf6)", color: "#fff", border: "none", borderRadius: 10, padding: "10px 22px", cursor: "pointer", fontSize: 15, fontWeight: 700 },
+  btnGhost:      { background: "transparent", color: "#6b7280", border: "1px solid #1f2937", borderRadius: 10, padding: "10px 16px", cursor: "pointer", fontSize: 16 },
+  lyricsBox:     { flex: 1, overflowY: "auto", display: "flex", flexDirection: "column", alignItems: "center", gap: 22, padding: "40px 0 60px" },
 };
