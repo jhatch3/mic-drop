@@ -3,6 +3,7 @@ import { useWallet, useConnection } from "@solana/wallet-adapter-react";
 import { WalletMultiButton } from "@solana/wallet-adapter-react-ui";
 import { AnchorProvider, Program, BN } from "@coral-xyz/anchor";
 import { Keypair, PublicKey, LAMPORTS_PER_SOL, SystemProgram } from "@solana/web3.js";
+import QRCode from "react-qr-code";
 import { getSocket } from "./socket";
 import type { RoomState } from "./types";
 import IDL from "../idl/pitch_battle.json";
@@ -204,8 +205,13 @@ export default function Host() {
           <div style={styles.card}>
             <div style={styles.cardTitle}>Share the Code</div>
             <div style={styles.bigCode}>{room.code}</div>
-            <div style={{ color: "#9ca3af", fontSize: 13, marginBottom: 16 }}>
-              P2 goes to <code style={{ color: "#facc15" }}>{joinUrl}</code>
+            {joinUrl && (
+              <div style={{ display: "flex", justifyContent: "center", margin: "16px 0", background: "#fff", padding: 16, borderRadius: 12 }}>
+                <QRCode value={joinUrl} size={180} />
+              </div>
+            )}
+            <div style={{ color: "#9ca3af", fontSize: 12, textAlign: "center", marginBottom: 16, wordBreak: "break-all" }}>
+              {joinUrl}
             </div>
             <div style={styles.label}>Players joined: {room.players.length} / 2</div>
             {room.players.map((p) => (
