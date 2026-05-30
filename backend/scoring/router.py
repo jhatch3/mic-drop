@@ -7,7 +7,7 @@ from .scorer import score_take
 router = APIRouter()
 
 
-@router.post("/api/score")
+@router.post("/score")
 async def score(
     song_id: str = Form(...),
     player_id: str = Form(...),

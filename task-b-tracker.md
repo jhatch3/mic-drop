@@ -47,12 +47,12 @@ Edge-case guard added (not in task pseudocode): skip the frame if all candidates
 
 ### Step 4 — POST /api/score (done)
 
-`backend/scoring/router.py` exposes `router: APIRouter` with `POST /api/score`:
+`backend/scoring/router.py` exposes `router: APIRouter` with `POST /score` (the `/api` prefix is applied at mount time, not in the decorator — final URL is `/api/score`):
 - multipart form: `song_id` (str), `player_id` (str), `audio` (file).
 - 404 if `assets/songs/<song_id>/contour.json` is missing.
 - Returns the `Score` dict from `score_take`.
 
-Not wired into a FastAPI app yet — `backend/main.py` is empty and belongs to Stream D. Whoever assembles the app does: `from backend.scoring.router import router; app.include_router(router)`. Also needs `python-multipart` (added to `backend/requirements.txt`).
+Not wired into a FastAPI app yet — `backend/main.py` is empty and belongs to Stream D. Whoever assembles the app does: `from backend.scoring.router import router; app.include_router(router, prefix="/api")`. Also needs `python-multipart` (added to `backend/requirements.txt`).
 
 ### Validation (done)
 
