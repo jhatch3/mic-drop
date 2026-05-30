@@ -27,15 +27,22 @@
   .pill { display:inline-block; padding:2px 8px; border-radius:999px; background:#222630; font-size:.8rem; }
   .words span { display:inline-block; margin:2px 4px; padding:2px 6px; background:#222a33; border-radius:4px; font-size:.82rem; }
   /* Karaoke — the main event */
-  #karaoke { background:#16181d; border:1px solid #2a2e37; border-radius:12px; padding:24px;
-             height:300px; overflow:hidden; text-align:center; margin-top:8px;
-             display:flex; flex-direction:column; justify-content:center; }
-  #karaoke .ln { color:#4a505a; font-size:1.15rem; line-height:1.9;
-                 transition:color .15s, transform .15s, opacity .15s; opacity:.7; }
-  #karaoke .ln.done   { color:#2a9d8f; opacity:.55; }     /* already sung */
-  #karaoke .ln.active { color:#2ee6a6; font-weight:700; font-size:1.7rem;
-                        transform:scale(1.03); opacity:1; }   /* current line — bright green */
-  #karaoke .ln.next   { color:#9aa0aa; opacity:.9; }
+  #karaoke { position:relative; background:#16181d; border:1px solid #2a2e37; border-radius:12px;
+             height:300px; overflow:hidden; text-align:center; margin-top:8px; }
+  /* inner track scrolls via transform so the active line sits at the vertical center */
+  #ktrack { position:absolute; left:0; right:0; top:50%; transition:transform .25s ease; }
+  #karaoke .ln { color:#4a505a; font-size:1.15rem; line-height:2.2; padding:2px 16px;
+                 transition:transform .15s, opacity .15s; opacity:.6; }
+  #karaoke .ln.done   { color:#2a9d8f; opacity:.45; }     /* already sung */
+  #karaoke .ln.active { font-weight:700; font-size:1.7rem;
+                        transform:scale(1.03); opacity:1; }   /* current line */
+  #karaoke .ln.next   { color:#9aa0aa; opacity:.85; }
+  /* per-character karaoke wipe on the active line */
+  #karaoke .ln.active .ch { color:#566; transition:color .08s linear; }
+  #karaoke .ln.active .ch.lit { color:#2ee6a6; }   /* sung so far — bright green */
+  /* center guide line */
+  #karaoke::after { content:""; position:absolute; left:0; right:0; top:50%; height:1px;
+                    background:linear-gradient(90deg,transparent,#2a2e3766,transparent); }
 </style>
 </head>
 <body>
@@ -50,8 +57,14 @@
   <button id="pull" style="background:#6ea8ff;color:#06131f">Pull lyrics</button>
   <span class="pill" id="lyrstat">—</span>
 </div>
+<div class="row" style="margin-bottom:6px">
+  <label style="margin:0">Forced alignment (real word timing):</label>
+  <input type="file" id="songfile" accept="audio/*,video/*" />
+  <button id="align" style="background:#2ee6a6;color:#06131f">Align to audio</button>
+  <span class="pill" id="alignstat">line-timing</span>
+</div>
 
-<div id="karaoke"><div class="ln">— pull a song's synced lyrics to begin —</div></div>
+<div id="karaoke"><div id="ktrack"><div class="ln">— pull a song's synced lyrics to begin —</div></div></div>
 
 <p style="margin-top:18px" class="row">
   <button id="rec">● Start</button>
@@ -83,6 +96,7 @@ const clockEl = document.getElementById("clock");
 const cv = document.getElementById("cv");
 const ctx2d = cv.getContext("2d");
 const karaokeEl = document.getElementById("karaoke");
+let ktrack = document.getElementById("ktrack");
 
 const MIDI_LO = 36, MIDI_HI = 84;            // C2..C6
 const NAMES = ["C","C#","D","D#","E","F","F#","G","G#","A","A#","B"];
@@ -111,23 +125,64 @@ function parseLRC(text){
 }
 
 function renderKaraoke(){
-  karaokeEl.innerHTML = "";
-  if(!lrc.length){ karaokeEl.innerHTML = '<div class="ln">— no synced lyrics for this song —</div>'; return; }
+  karaokeEl.innerHTML = '<div id="ktrack"></div>';
+  ktrack = document.getElementById("ktrack");
+  if(!lrc.length){ ktrack.innerHTML = '<div class="ln">— no synced lyrics for this song —</div>'; return; }
   lrc.forEach((l)=>{ const d=document.createElement("div");
-    d.className="ln"; d.textContent=l.text||"♪"; karaokeEl.appendChild(d); });
+    d.className="ln"; d.textContent=l.text||"♪"; ktrack.appendChild(d); });
+  ktrack.style.transform = "translateY(0)";
 }
 
-// Highlight by song time (seconds): past lines dim, current line green, scroll to center.
+let curIdx = -2;
+let activeChars = [];   // char spans of the current active line
+
+// Split a line node's text into per-character spans for the wipe.
+function makeChars(node){
+  const text = node.textContent;
+  node.textContent = "";
+  const spans = [];
+  for(const c of text){
+    const s=document.createElement("span"); s.className="ch";
+    s.textContent = c==" " ? " " : c;   // keep spaces visible/measurable
+    node.appendChild(s); spans.push(s);
+  }
+  return spans;
+}
+
+// Highlight by song time (seconds): slide active line to center, wipe it letter
+// by letter across the line's duration (this LRC stamp → the next one).
 function syncKaraoke(t){
   if(!lrc.length) return;
   let idx=-1;
   for(let i=0;i<lrc.length;i++){ if(lrc[i].t<=t) idx=i; else break; }
-  const nodes=karaokeEl.children;
-  for(let i=0;i<nodes.length;i++){
-    nodes[i].className = "ln" + (i<idx?" done":(i===idx?" active":(i===idx+1?" next":"")));
+  const nodes=ktrack.children;
+
+  if(idx!==curIdx){                    // line changed → restyle + rebuild spans
+    curIdx = idx;
+    for(let i=0;i<nodes.length;i++){
+      nodes[i].className = "ln" + (i<idx?" done":(i===idx?" active":(i===idx+1?" next":"")));
+      if(i!==idx && nodes[i].dataset.split){     // collapse old split lines back to text
+        nodes[i].textContent = lrc[i].text||"♪"; delete nodes[i].dataset.split;
+      }
+    }
+    activeChars = [];
+    if(idx>=0 && nodes[idx]){
+      nodes[idx].textContent = lrc[idx].text||"♪";
+      activeChars = makeChars(nodes[idx]); nodes[idx].dataset.split="1";
+      const y = nodes[idx].offsetTop + nodes[idx].clientHeight/2;
+      ktrack.style.transform = `translateY(${-y}px)`;
+    }
   }
-  if(idx>=0 && nodes[idx]){
-    karaokeEl.scrollTop = nodes[idx].offsetTop - karaokeEl.clientHeight/2 + nodes[idx].clientHeight/2;
+
+  if(idx<0 || !activeChars.length) return;
+  // progress through the active line, 0..1, by elapsed fraction of its duration
+  const start = lrc[idx].t;
+  const end   = (idx+1<lrc.length) ? lrc[idx+1].t : start+3;
+  const dur   = Math.max(0.25, end-start);
+  const prog  = Math.min(1, Math.max(0, (t-start)/dur));
+  const lit   = Math.round(prog * activeChars.length);
+  for(let i=0;i<activeChars.length;i++){
+    activeChars[i].classList.toggle("lit", i<lit);
   }
 }
 
@@ -146,11 +201,39 @@ document.getElementById("pull").onclick = async () => {
     const d = await res.json();
     document.getElementById("ref").value = d.plain_lyrics || "";
     lrc = d.synced_lyrics ? parseLRC(d.synced_lyrics) : [];
-    // shift so the first sung line appears ~1.5s after you press Start
-    lrcOffset = lrc.length ? Math.max(0, lrc[0].t - 1.5) : 0;
+    song = lrc.map(l=>({ t:l.t, text:l.text, words:[] }));   // line timing only (until Align)
+    aligned = false;
+    document.getElementById("alignstat").textContent = "line-timing";
+    lrcOffset = song.length ? Math.max(0, lineStart(0) - 1.5) : 0;
     renderKaraoke();
     stat.textContent = `✓ ${d.artist || "?"} — ${d.track || title}` +
       (lrc.length ? ` (synced · ${lrc.length} lines)` : " (plain only)");
+  } catch(err){ stat.textContent = "failed: " + err.message; }
+};
+
+// Forced alignment: upload the song audio → real per-word timings.
+document.getElementById("align").onclick = async () => {
+  const f = document.getElementById("songfile").files[0];
+  const stat = document.getElementById("alignstat");
+  const title = document.getElementById("title").value.trim();
+  const artist = document.getElementById("artist").value.trim();
+  if(!f){ stat.textContent = "choose an audio/video file"; return; }
+  if(!title){ stat.textContent = "enter song title first"; return; }
+  stat.textContent = "aligning… (first run downloads model)";
+  const fd = new FormData();
+  fd.append("file", f, f.name);
+  fd.append("track", title);
+  if(artist) fd.append("artist", artist);
+  try {
+    const res = await fetch("/api/align", { method:"POST", body: fd });
+    if(!res.ok){ const er=await res.json().catch(()=>({})); stat.textContent="error: "+(er.detail||res.status); return; }
+    const d = await res.json();
+    song = d.lines || [];
+    aligned = true;
+    const nWords = song.reduce((a,l)=>a+(l.words?l.words.length:0),0);
+    lrcOffset = song.length ? Math.max(0, lineStart(0) - 1.5) : 0;
+    renderKaraoke();
+    stat.textContent = `✓ aligned · ${nWords} words (real timing)`;
   } catch(err){ stat.textContent = "failed: " + err.message; }
 };
 

@@ -17,6 +17,7 @@ from fastapi import APIRouter, File, HTTPException, UploadFile
 
 from common.audio import DEFAULT_SR, AudioDecodeError, load_audio
 from common.pitch import HOP, contour_from_audio
+from .align import align_song, parse_lrc
 from .lyrics_lookup import fetch_lyrics
 
 router = APIRouter()
@@ -56,3 +57,36 @@ async def lyrics(
     if result is None:
         raise HTTPException(status_code=404, detail="no lyrics found for that song")
     return result
+
+
+def _align(data: bytes, track: str, artist: str | None) -> dict:
+    lookup = fetch_lyrics(track, artist)
+    if not lookup or not lookup.get("synced_lyrics"):
+        raise ValueError("no synced lyrics found for that song")
+    lrc = parse_lrc(lookup["synced_lyrics"])
+    audio = load_audio(data)
+    lines = align_song(audio, lrc)
+    return {
+        "track": lookup.get("track"),
+        "artist": lookup.get("artist"),
+        "duration": round(audio.size / DEFAULT_SR, 2),
+        "lines": lines,
+    }
+
+
+@router.post("/align")
+async def align(
+    file: UploadFile = File(...),
+    track: str = Form(...),
+    artist: str | None = Form(None),
+) -> dict:
+    """Forced-align a song's LRCLIB lyrics to the uploaded audio → word timings."""
+    data = await file.read()
+    if not data:
+        raise HTTPException(status_code=400, detail="empty file")
+    try:
+        return await asyncio.to_thread(_align, data, track, artist)
+    except AudioDecodeError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
