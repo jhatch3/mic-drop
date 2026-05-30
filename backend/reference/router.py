@@ -17,6 +17,7 @@ from fastapi import APIRouter, File, HTTPException, UploadFile
 
 from common.audio import DEFAULT_SR, AudioDecodeError, load_audio
 from common.pitch import HOP, contour_from_audio
+from .lyrics_lookup import fetch_lyrics
 
 router = APIRouter()
 
@@ -41,3 +42,17 @@ async def reference(file: UploadFile = File(...)) -> dict:
         return await asyncio.to_thread(_extract, data)
     except AudioDecodeError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.get("/lyrics")
+async def lyrics(
+    track: str,
+    artist: str | None = None,
+    album: str | None = None,
+    duration: int | None = None,
+) -> dict:
+    """Pull real reference lyrics for a song from LRCLIB (free, no key)."""
+    result = await asyncio.to_thread(fetch_lyrics, track, artist, album, duration)
+    if result is None:
+        raise HTTPException(status_code=404, detail="no lyrics found for that song")
+    return result

@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>Pitch Battle — Live Mic + Pitch Viz</title>
+<title>Pitch Battle — Live Karaoke</title>
 <style>
   :root { color-scheme: dark; }
   body { font-family: system-ui, sans-serif; max-width: 880px; margin: 32px auto;
@@ -13,15 +13,12 @@
   button { font-size: 1rem; padding: 10px 18px; border-radius: 8px; border: 0; cursor: pointer; }
   #rec { background: #e63946; color: #fff; }
   #rec.on { background: #2a9d8f; }
-  #rec:disabled { opacity: .5; cursor: default; }
   label { display:block; margin: 16px 0 6px; font-size:.85rem; color:#9aa0aa; }
   textarea { width:100%; box-sizing:border-box; background:#16181d; color:#eee;
              border:1px solid #2a2e37; border-radius:8px; padding:8px; }
-  canvas { width:100%; height:280px; background:#16181d; border:1px solid #2a2e37;
+  input { background:#16181d; color:#eee; border:1px solid #2a2e37; border-radius:8px; padding:8px; }
+  canvas { width:100%; height:200px; background:#16181d; border:1px solid #2a2e37;
            border-radius:10px; display:block; margin-top:8px; }
-  video { width:100%; max-height:300px; background:#000; border:1px solid #2a2e37;
-          border-radius:10px; margin-top:8px; }
-  input[type=file] { font-size:.9rem; }
   .row { display:flex; gap:16px; align-items:center; flex-wrap:wrap; }
   .stat { font-variant-numeric: tabular-nums; }
   .big { font-size:1.6rem; font-weight:700; }
@@ -29,36 +26,45 @@
         white-space:pre-wrap; word-break:break-word; min-height:2em; }
   .pill { display:inline-block; padding:2px 8px; border-radius:999px; background:#222630; font-size:.8rem; }
   .words span { display:inline-block; margin:2px 4px; padding:2px 6px; background:#222a33; border-radius:4px; font-size:.82rem; }
+  /* Karaoke — the main event */
+  #karaoke { background:#16181d; border:1px solid #2a2e37; border-radius:12px; padding:24px;
+             height:300px; overflow:hidden; text-align:center; margin-top:8px;
+             display:flex; flex-direction:column; justify-content:center; }
+  #karaoke .ln { color:#4a505a; font-size:1.15rem; line-height:1.9;
+                 transition:color .15s, transform .15s, opacity .15s; opacity:.7; }
+  #karaoke .ln.done   { color:#2a9d8f; opacity:.55; }     /* already sung */
+  #karaoke .ln.active { color:#2ee6a6; font-weight:700; font-size:1.7rem;
+                        transform:scale(1.03); opacity:1; }   /* current line — bright green */
+  #karaoke .ln.next   { color:#9aa0aa; opacity:.9; }
 </style>
 </head>
 <body>
-<h1>🎤 Pitch Battle — Live Mic + Pitch Viz</h1>
-<p class="muted">Streams your mic over a WebSocket to <code>/ws/live</code>. The server detects pitch
-per frame and streams it back (drawn live below); on stop it transcribes the whole take with Whisper.</p>
+<h1>🎤 Pitch Battle — Live Karaoke</h1>
+<p class="muted">Pull a song's synced lyrics, hit Start, and sing. The current line turns
+<b style="color:#2ee6a6">green</b> in real time. Your pitch is drawn below; on stop you get a transcript + lyrics score.</p>
 
-<label for="vid">Reference video / audio (.mp4, .webm, .mp3, .wav) — sing against it</label>
-<input type="file" id="vid" accept="video/*,audio/*" />
-<span class="pill" id="refstat">no reference</span>
+<label>Pull synced lyrics by song</label>
+<div class="row" style="margin-bottom:6px">
+  <input id="title" placeholder="song title" style="flex:1;min-width:140px" />
+  <input id="artist" placeholder="artist (optional)" style="flex:1;min-width:140px" />
+  <button id="pull" style="background:#6ea8ff;color:#06131f">Pull lyrics</button>
+  <span class="pill" id="lyrstat">—</span>
+</div>
 
-<video id="player" controls playsinline></video>
-
-<label for="ref">Reference lyrics (optional — for a lyrics score)</label>
-<textarea id="ref" rows="2" placeholder="e.g. twinkle twinkle little star how I wonder what you are"></textarea>
+<div id="karaoke"><div class="ln">— pull a song's synced lyrics to begin —</div></div>
 
 <p style="margin-top:18px" class="row">
   <button id="rec">● Start</button>
   <span class="pill" id="conn">disconnected</span>
+  <span class="stat">⏱ <b id="clock">0.0</b>s</span>
   <span class="stat">note: <b class="big" id="note">—</b></span>
-  <span class="stat muted">frames: <span id="frames">0</span></span>
 </p>
 
-<canvas id="cv" width="1720" height="560"></canvas>
-<p class="muted">Y = MIDI note (C2–C6). <b style="color:#2ee6a6">Green</b> = your voice ·
-  <b style="color:#6ea8ff">Blue</b> = reference (the video). X scrolls with time.</p>
+<canvas id="cv" width="1720" height="400"></canvas>
+<p class="muted">Y = MIDI note (C2–C6). <b style="color:#2ee6a6">Green</b> = your voice. X scrolls with time.</p>
 
-<div class="row" style="margin-top:8px">
-  <span>Pitch score vs video: <b class="big" id="pitch_score">—</b></span>
-</div>
+<label>Reference lyrics (used for the lyrics score — auto-filled by Pull, or type your own)</label>
+<textarea id="ref" rows="3" placeholder="lyrics appear here after Pull, or type your own"></textarea>
 
 <label>Transcript</label>
 <pre id="transcript">—</pre>
@@ -73,49 +79,89 @@ per frame and streams it back (drawn live below); on stop it transcribes the who
 const recBtn = document.getElementById("rec");
 const connEl = document.getElementById("conn");
 const noteEl = document.getElementById("note");
-const framesEl = document.getElementById("frames");
+const clockEl = document.getElementById("clock");
 const cv = document.getElementById("cv");
 const ctx2d = cv.getContext("2d");
+const karaokeEl = document.getElementById("karaoke");
 
 const MIDI_LO = 36, MIDI_HI = 84;            // C2..C6
 const NAMES = ["C","C#","D","D#","E","F","F#","G","G#","A","A#","B"];
 let pts = [];                                 // {t, midi} — your voice
-let refContour = [];                          // {t, midi} — reference from the video
-let tMax = 0, frameCount = 0;
+let tMax = 0;
 let audioCtx, workletNode, micStream, ws, recording = false;
-const player = document.getElementById("player");
 
-// Upload a video/audio file → server extracts its reference pitch contour.
-document.getElementById("vid").onchange = async (e) => {
-  const f = e.target.files[0];
-  if(!f) return;
-  player.src = URL.createObjectURL(f);
-  const refstat = document.getElementById("refstat");
-  refstat.textContent = "extracting reference…";
-  const fd = new FormData(); fd.append("file", f, f.name);
+// ---- Lyrics (LRCLIB synced) ----
+let lrc = [];               // [{t, text}]
+let lrcOffset = 0;          // shift so the first line lands ~1.5s after Start
+let recStartMs = 0;         // performance.now() when recording began
+
+function parseLRC(text){
+  const out = [];
+  const re = /\[(\d+):(\d+(?:\.\d+)?)\]/g;
+  for(const raw of text.split("\n")){
+    const stamps = [...raw.matchAll(re)];
+    if(!stamps.length) continue;
+    const words = raw.replace(re, "").trim();
+    for(const m of stamps){
+      out.push({ t: parseInt(m[1],10)*60 + parseFloat(m[2]), text: words });
+    }
+  }
+  out.sort((a,b)=>a.t-b.t);
+  return out;
+}
+
+function renderKaraoke(){
+  karaokeEl.innerHTML = "";
+  if(!lrc.length){ karaokeEl.innerHTML = '<div class="ln">— no synced lyrics for this song —</div>'; return; }
+  lrc.forEach((l)=>{ const d=document.createElement("div");
+    d.className="ln"; d.textContent=l.text||"♪"; karaokeEl.appendChild(d); });
+}
+
+// Highlight by song time (seconds): past lines dim, current line green, scroll to center.
+function syncKaraoke(t){
+  if(!lrc.length) return;
+  let idx=-1;
+  for(let i=0;i<lrc.length;i++){ if(lrc[i].t<=t) idx=i; else break; }
+  const nodes=karaokeEl.children;
+  for(let i=0;i<nodes.length;i++){
+    nodes[i].className = "ln" + (i<idx?" done":(i===idx?" active":(i===idx+1?" next":"")));
+  }
+  if(idx>=0 && nodes[idx]){
+    karaokeEl.scrollTop = nodes[idx].offsetTop - karaokeEl.clientHeight/2 + nodes[idx].clientHeight/2;
+  }
+}
+
+document.getElementById("pull").onclick = async () => {
+  const title = document.getElementById("title").value.trim();
+  const artist = document.getElementById("artist").value.trim();
+  const stat = document.getElementById("lyrstat");
+  if(!title){ stat.textContent = "enter a song title"; return; }
+  stat.textContent = "searching…";
+  const qs = new URLSearchParams({ track: title });
+  if(artist) qs.set("artist", artist);
   try {
-    const res = await fetch("/api/reference", { method:"POST", body: fd });
-    if(!res.ok){ const er=await res.json().catch(()=>({})); refstat.textContent="error: "+(er.detail||res.status); return; }
-    const data = await res.json();
-    refContour = data.contour || [];
-    const voiced = refContour.filter(p=>p.midi!=null).length;
-    refstat.textContent = `reference ready · ${data.duration}s · ${voiced} voiced frames`;
-  } catch(err){ refstat.textContent = "upload failed: "+err.message; }
+    const res = await fetch("/api/lyrics?" + qs.toString());
+    if(res.status === 404){ stat.textContent = "not found"; return; }
+    if(!res.ok){ stat.textContent = "error " + res.status; return; }
+    const d = await res.json();
+    document.getElementById("ref").value = d.plain_lyrics || "";
+    lrc = d.synced_lyrics ? parseLRC(d.synced_lyrics) : [];
+    // shift so the first sung line appears ~1.5s after you press Start
+    lrcOffset = lrc.length ? Math.max(0, lrc[0].t - 1.5) : 0;
+    renderKaraoke();
+    stat.textContent = `✓ ${d.artist || "?"} — ${d.track || title}` +
+      (lrc.length ? ` (synced · ${lrc.length} lines)` : " (plain only)");
+  } catch(err){ stat.textContent = "failed: " + err.message; }
 };
 
+// ---- Pitch graph (your voice) ----
 function midiName(m){ const r=Math.round(m); return NAMES[((r%12)+12)%12]+(Math.floor(r/12)-1); }
 function yFor(m){ return cv.height - ((m-MIDI_LO)/(MIDI_HI-MIDI_LO))*cv.height; }
 function median(a){ const s=[...a].sort((x,y)=>x-y); const n=s.length;
   return n? (n%2? s[(n-1)/2] : 0.5*(s[n/2-1]+s[n/2])) : null; }
 
-// Outlier rejection + smoothing knobs.
-const MED_WIN  = 5;    // median-filter window (frames) — kills lone spikes
-const JUMP_SEMI = 3;   // break the line if smoothed pitch jumps more than this
-const GAP_SEC  = 0.35; // break the line across silence longer than this
+const MED_WIN = 5, JUMP_SEMI = 3, GAP_SEC = 0.35;
 
-// Turn raw frames into a clean, smoothed series of {t, midi} (voiced only).
-// A point survives only if it agrees with the local median, so single-frame
-// up/down spikes never render; sustained pitch passes through.
 function smoothed(){
   const out = [];
   for(let i=0;i<pts.length;i++){
@@ -123,10 +169,10 @@ function smoothed(){
     const lo=Math.max(0,i-(MED_WIN>>1)), hi=Math.min(pts.length-1,i+(MED_WIN>>1));
     const win=[];
     for(let j=lo;j<=hi;j++){ if(pts[j].midi!=null) win.push(pts[j].midi); }
-    if(win.length < 3) continue;                 // not enough support → drop (outlier)
+    if(win.length < 3) continue;
     const med = median(win);
-    if(Math.abs(pts[i].midi - med) > JUMP_SEMI) continue; // disagrees with neighbors → spike, drop
-    out.push({t: pts[i].t, midi: med});          // use the median, not the raw value
+    if(Math.abs(pts[i].midi - med) > JUMP_SEMI) continue;
+    out.push({t: pts[i].t, midi: med});
   }
   return out;
 }
@@ -134,42 +180,35 @@ function smoothed(){
 function draw(){
   const W=cv.width, H=cv.height;
   ctx2d.clearRect(0,0,W,H);
-  // gridlines per octave
   ctx2d.strokeStyle="#262b34"; ctx2d.fillStyle="#5b626d"; ctx2d.font="13px system-ui"; ctx2d.lineWidth=1;
   for(let m=MIDI_LO; m<=MIDI_HI; m+=12){
     const y=yFor(m); ctx2d.beginPath(); ctx2d.moveTo(0,y); ctx2d.lineTo(W,y); ctx2d.stroke();
     ctx2d.fillText(midiName(m), 4, y-4);
   }
-  const WINDOW=12; // seconds visible
-  const t0=Math.max(0, tMax-WINDOW);
-  const xFor=(t)=>((t-t0)/WINDOW)*W;
+  const WINDOW=12, t0=Math.max(0, tMax-WINDOW), xFor=(t)=>((t-t0)/WINDOW)*W;
+  ctx2d.strokeStyle="#2ee6a6"; ctx2d.lineWidth=3; ctx2d.lineJoin="round"; ctx2d.lineCap="round";
+  ctx2d.beginPath();
+  let pen=false, prev=null;
+  for(const p of smoothed()){
+    if(p.t < t0){ prev=p; continue; }
+    const x=xFor(p.t), y=yFor(p.midi);
+    const brk = !prev || (p.t-prev.t > GAP_SEC) || (Math.abs(p.midi-prev.midi) > JUMP_SEMI);
+    if(brk || !pen){ ctx2d.moveTo(x,y); pen=true; } else { ctx2d.lineTo(x,y); }
+    prev=p;
+  }
+  ctx2d.stroke();
 
-  // draw a {t,midi} series as a solid line, broken across gaps and big jumps
-  const drawLine=(series, color, lw)=>{
-    ctx2d.strokeStyle=color; ctx2d.lineWidth=lw;
-    ctx2d.lineJoin="round"; ctx2d.lineCap="round";
-    ctx2d.beginPath();
-    let pen=false, prev=null;
-    for(const p of series){
-      if(p.midi==null){ pen=false; prev=null; continue; }
-      if(p.t < t0){ prev=p; continue; }
-      if(p.t > t0+WINDOW) break;
-      const x=xFor(p.t), y=yFor(p.midi);
-      const brk = !prev || (p.t-prev.t > GAP_SEC) || (Math.abs(p.midi-prev.midi) > JUMP_SEMI);
-      if(brk || !pen){ ctx2d.moveTo(x,y); pen=true; } else { ctx2d.lineTo(x,y); }
-      prev=p;
-    }
-    ctx2d.stroke();
-  };
-
-  // reference (the video) underneath, your voice on top
-  drawLine(refContour, "#6ea8ff", 2);
-  drawLine(smoothed(), "#2ee6a6", 3);
+  // drive karaoke + clock from the recording timeline
+  if(recording){
+    const elapsed = (performance.now()-recStartMs)/1000;
+    clockEl.textContent = elapsed.toFixed(1);
+    syncKaraoke(elapsed + lrcOffset);
+  }
   requestAnimationFrame(draw);
 }
 requestAnimationFrame(draw);
 
-// AudioWorklet that buffers to fixed 2048-sample frames and posts them up.
+// ---- Mic capture ----
 const workletSrc = `
 class Cap extends AudioWorkletProcessor {
   constructor(){ super(); this.buf=new Float32Array(2048); this.n=0; }
@@ -183,29 +222,23 @@ class Cap extends AudioWorkletProcessor {
 registerProcessor('cap', Cap);
 `;
 
-recBtn.onclick = async () => {
-  if(!recording){ await start(); } else { stop(); }
-};
+recBtn.onclick = async () => { if(!recording){ await start(); } else { stop(); } };
 
 async function start(){
-  pts=[]; tMax=0; frameCount=0; framesEl.textContent="0";
+  pts=[]; tMax=0;
   document.getElementById("transcript").textContent="…";
   document.getElementById("wordlist").innerHTML="";
   document.getElementById("lyrics").textContent="—";
-  document.getElementById("pitch_score").textContent="—";
 
   ws = new WebSocket(`ws://${location.host}/ws/live`);
   ws.binaryType="arraybuffer";
   ws.onopen = ()=>{ connEl.textContent="connected";
     const ref=document.getElementById("ref").value.trim();
-    ws.send(JSON.stringify({type:"config",
-      reference_lyrics: ref||null,
-      reference: refContour.length ? refContour : null})); };
+    ws.send(JSON.stringify({type:"config", reference_lyrics: ref||null})); };
   ws.onclose = ()=>{ connEl.textContent="disconnected"; };
   ws.onmessage = (e)=>{
     const m=JSON.parse(e.data);
     if(m.type==="pitch"){
-      frameCount++; framesEl.textContent=frameCount;
       tMax=Math.max(tMax, m.t);
       pts.push({t:m.t, midi:m.midi});
       if(pts.length>4000) pts.shift();
@@ -218,11 +251,6 @@ async function start(){
       const wl=document.getElementById("wordlist"); wl.innerHTML="";
       (m.words||[]).forEach(w=>{ const s=document.createElement("span");
         s.textContent=`${w.word} (${w.start}s)`; wl.appendChild(s); });
-      if(m.pitch_score){
-        const ps=m.pitch_score;
-        document.getElementById("pitch_score").textContent =
-          `${ps.score} (${ps.frames_hit}/${ps.frames_scored})`;
-      }
     }
   };
 
@@ -234,12 +262,10 @@ async function start(){
   const src = audioCtx.createMediaStreamSource(micStream);
   workletNode = new AudioWorkletNode(audioCtx, "cap");
   workletNode.port.onmessage = (e)=>{ if(ws && ws.readyState===1) ws.send(e.data.buffer); };
-  const sink = audioCtx.createGain(); sink.gain.value=0;     // keep graph pumping, no echo
+  const sink = audioCtx.createGain(); sink.gain.value=0;
   src.connect(workletNode); workletNode.connect(sink); sink.connect(audioCtx.destination);
 
-  // play the reference video in sync with the recording timeline
-  if(player.src){ try { player.currentTime=0; await player.play(); } catch(_){} }
-
+  recStartMs = performance.now();
   recording=true; recBtn.textContent="■ Stop"; recBtn.classList.add("on");
 }
 
@@ -248,7 +274,6 @@ function stop(){
   try { workletNode && workletNode.disconnect(); } catch(_){}
   try { micStream && micStream.getTracks().forEach(t=>t.stop()); } catch(_){}
   try { audioCtx && audioCtx.close(); } catch(_){}
-  try { player.pause(); } catch(_){}
   document.getElementById("transcript").textContent="transcribing…";
   if(ws && ws.readyState===1){ ws.send(JSON.stringify({type:"stop"})); }
 }
