@@ -34,6 +34,8 @@ _BACKEND = Path(__file__).parent
 _STATIC = _BACKEND / "static"
 _MC_DIR = _BACKEND / "assets" / "mc"
 _MC_DIR.mkdir(parents=True, exist_ok=True)
+_SFX_DIR = _BACKEND / "assets" / "sfx"
+_SFX_DIR.mkdir(parents=True, exist_ok=True)
 
 
 @app.get("/health")
@@ -53,6 +55,12 @@ def live_page() -> FileResponse:
     return FileResponse(_STATIC / "live.html")
 
 
+@app.get("/mc-test")
+def mc_test_page() -> FileResponse:
+    """AI MC tester: generate a roast (/api/commentary) and voice it (/api/mc-voice)."""
+    return FileResponse(_STATIC / "mc_test.html")
+
+
 # /api/*
 app.include_router(scoring_router, prefix="/api")           # Stream B: /api/score
 app.include_router(transcription_router, prefix="/api")     # Stream D: /api/transcribe
@@ -65,3 +73,5 @@ app.include_router(live_ws_router)  # /ws/live (no /api prefix)
 
 # Static: MC audio clips. Served at /mc-audio/<match_id>.mp3 + /mc-audio/fallback.mp3.
 app.mount("/mc-audio", StaticFiles(directory=_MC_DIR), name="mc-audio")
+# Static: cached sound effects. Served at /sfx-audio/<name>.mp3.
+app.mount("/sfx-audio", StaticFiles(directory=_SFX_DIR), name="sfx-audio")

@@ -20,7 +20,9 @@ librosa
 # --- Stream D: data ---
 snowflake-connector-python
 
+# --- Stream D: AI MC (Gemini roast + ElevenLabs voice) ---
+google-genai               # unified Gemini SDK (function calling / tool use)
+elevenlabs                 # MC voice (streaming TTS)
+
 # --- added by other Stream D phases (not yet wired) ---
-# google-generativeai      # Gemini commentary
-# elevenlabs               # MC voice
 # torch / torchcrepe       # Stream B: real pitch scoring (heavyweight)
