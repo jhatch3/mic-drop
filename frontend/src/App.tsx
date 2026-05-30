@@ -11,9 +11,21 @@ const TREASURY   = new PublicKey("2KnfMtidoDSVYxJDBNEK1e77rVQijvJ71zkBgz6kwejm")
 const FEE_BPS    = 100;                        // 1% to treasury
 const STAKE_LAMP = Math.floor(0.01 * LAMPORTS_PER_SOL); // 0.01 SOL each
 
-// Test keypairs — P2 and oracle are held in-memory for hot-seat testing
-const p2     = Keypair.generate();
-const oracle = Keypair.generate();
+// Test keypairs — P2 and oracle. Persisted in localStorage so page reloads reuse
+// the SAME keys instead of minting fresh zero-balance ones (which would each need
+// a new faucet airdrop and quickly exhaust the devnet rate limit). Fund these
+// pubkeys ONCE (web faucet at faucet.solana.com or a transfer from P1) and you're set.
+function persistedKeypair(storageKey: string): Keypair {
+  try {
+    const saved = localStorage.getItem(storageKey);
+    if (saved) return Keypair.fromSecretKey(Uint8Array.from(JSON.parse(saved)));
+  } catch { /* fall through and regenerate */ }
+  const kp = Keypair.generate();
+  localStorage.setItem(storageKey, JSON.stringify(Array.from(kp.secretKey)));
+  return kp;
+}
+const p2     = persistedKeypair("pb_p2_keypair");
+const oracle = persistedKeypair("pb_oracle_keypair");
 
 function matchPda(matchId: string) {
   return PublicKey.findProgramAddressSync(
@@ -91,18 +103,31 @@ export default function App() {
   // Airdrop P2 and oracle, then mark ready
   const setup = useCallback(async () => {
     setBusy(true);
-    addLog("Airdropping devnet SOL to P2 and oracle...");
+    addLog(`P2: ${p2.publicKey.toBase58()}`);
+    addLog(`Oracle: ${oracle.publicKey.toBase58()}`);
     try {
-      for (const kp of [p2, oracle]) {
-        const sig = await connection.requestAirdrop(kp.publicKey, 1 * LAMPORTS_PER_SOL);
-        await connection.confirmTransaction(sig, "confirmed");
+      const need = 0.02 * LAMPORTS_PER_SOL; // enough to stake (0.01) + fees
+      let allFunded = true;
+      for (const [label, kp] of [["P2", p2], ["Oracle", oracle]] as const) {
+        const bal = await connection.getBalance(kp.publicKey);
+        if (bal >= need) { addLog(`${label} already funded (${bal / LAMPORTS_PER_SOL} SOL) ✓`); continue; }
+        addLog(`${label} low — requesting airdrop...`);
+        try {
+          const sig = await connection.requestAirdrop(kp.publicKey, 1 * LAMPORTS_PER_SOL);
+          await connection.confirmTransaction(sig, "confirmed");
+          addLog(`${label} airdropped ✓`);
+        } catch (e: any) {
+          allFunded = false;
+          addLog(`${label} airdrop failed (${e.message}). Fund it manually at faucet.solana.com using the pubkey above, then click Setup again.`);
+        }
       }
-      addLog(`P2: ${p2.publicKey.toBase58().slice(0,8)}...  Oracle: ${oracle.publicKey.toBase58().slice(0,8)}...`);
-      addLog("Ready! Connect your Phantom wallet as P1 then create a match.");
-      setPhase("ready");
+      if (allFunded) {
+        addLog("Ready! Connect your Phantom wallet as P1 then create a match.");
+        setPhase("ready");
+      }
       await refreshBalances();
     } catch (e: any) {
-      addLog("Airdrop failed: " + e.message);
+      addLog("Setup failed: " + e.message);
     }
     setBusy(false);
   }, [connection, refreshBalances]);

@@ -1,14 +1,9 @@
-"""POST /api/match/finish — the one call the laptop makes at the end.
-
-Today: stub. Reads form fields + accepts the two audio blobs, returns a hardcoded
-FinishResponse. Replace `stub_finish` with real fan-out (score + settle + MC +
-Snowflake) per `tasks/stream-D-ai-glue.md` step 4.
-"""
+"""POST /api/match/finish — the one call the laptop makes at the end."""
 from typing import Annotated
 
-from fastapi import APIRouter, File, Form, UploadFile
+from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 
-from orchestration.finish import stub_finish
+from orchestration.finish import handle_finish
 
 router = APIRouter()
 
@@ -21,9 +16,21 @@ async def match_finish(
     p2_pubkey: Annotated[str, Form(...)],
     take_p1: Annotated[UploadFile, File(...)],
     take_p2: Annotated[UploadFile, File(...)],
+    stake_lamports: Annotated[int, Form()] = 0,
+    fee_bps: Annotated[int, Form()] = 0,
 ) -> dict:
-    # Drain the uploads so the connection closes cleanly even though we
-    # discard the bytes in stub mode.
-    await take_p1.read()
-    await take_p2.read()
-    return stub_finish(match_id, song_id, p1_pubkey, p2_pubkey)
+    p1_bytes = await take_p1.read()
+    p2_bytes = await take_p2.read()
+    if not p1_bytes or not p2_bytes:
+        raise HTTPException(status_code=400, detail="both takes must be non-empty")
+
+    return await handle_finish(
+        match_id=match_id,
+        song_id=song_id,
+        p1_pubkey=p1_pubkey,
+        p2_pubkey=p2_pubkey,
+        p1_bytes=p1_bytes,
+        p2_bytes=p2_bytes,
+        stake_lamports=stake_lamports,
+        fee_bps=fee_bps,
+    )

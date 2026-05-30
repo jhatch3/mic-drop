@@ -20,6 +20,10 @@ librosa
 # --- Stream D: data ---
 snowflake-connector-python
 
+# --- Stream A -> D: backend oracle (settle/refund on devnet) ---
+solders==0.21.0
+solana==0.34.3
+
 # --- added by other Stream D phases (not yet wired) ---
 # google-generativeai      # Gemini commentary
 # elevenlabs               # MC voice
