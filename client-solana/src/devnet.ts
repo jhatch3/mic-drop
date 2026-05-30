@@ -12,7 +12,7 @@ import { matchPda, vaultPda, keypairToSigner } from "./index";
 
 // Set after `anchor build && anchor deploy --provider.cluster devnet`
 const PROGRAM_ID_STR =
-  process.env.PROGRAM_ID ?? "Fg6PaFpoGXkYsidMpWTK6W2BeZ7FEfcYkg476zPFsLnS";
+  process.env.PROGRAM_ID ?? "2eMwChdNVoxeoWjdaiTuBGasDiHCKN3jbw7dL5eSyuZf";
 const RPC_URL =
   process.env.SOLANA_RPC_URL ?? "https://api.devnet.solana.com";
 

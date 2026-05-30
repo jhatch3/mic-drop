@@ -1,0 +1,509 @@
+{
+  "address": "2eMwChdNVoxeoWjdaiTuBGasDiHCKN3jbw7dL5eSyuZf",
+  "metadata": {
+    "name": "pitch_battle",
+    "version": "0.1.0",
+    "spec": "0.1.0",
+    "description": "Pitch Battle escrow program"
+  },
+  "instructions": [
+    {
+      "name": "create_match",
+      "docs": [
+        "P1 creates the match and records the oracle, treasury, and fee.",
+        "fee_bps is in basis points: 100 = 1%, 1 = 0.01%."
+      ],
+      "discriminator": [
+        107,
+        2,
+        184,
+        145,
+        70,
+        142,
+        17,
+        165
+      ],
+      "accounts": [
+        {
+          "name": "player_one",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "match_account",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  109,
+                  97,
+                  116,
+                  99,
+                  104
+                ]
+              },
+              {
+                "kind": "arg",
+                "path": "match_id"
+              }
+            ]
+          }
+        },
+        {
+          "name": "vault",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
+              },
+              {
+                "kind": "arg",
+                "path": "match_id"
+              }
+            ]
+          }
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "match_id",
+          "type": "string"
+        },
+        {
+          "name": "stake_lamports",
+          "type": "u64"
+        },
+        {
+          "name": "player_two",
+          "type": "pubkey"
+        },
+        {
+          "name": "oracle",
+          "type": "pubkey"
+        },
+        {
+          "name": "treasury",
+          "type": "pubkey"
+        },
+        {
+          "name": "fee_bps",
+          "type": "u16"
+        }
+      ]
+    },
+    {
+      "name": "refund",
+      "docs": [
+        "Oracle-only. Tie case — returns each player's stake."
+      ],
+      "discriminator": [
+        2,
+        96,
+        183,
+        251,
+        63,
+        208,
+        46,
+        46
+      ],
+      "accounts": [
+        {
+          "name": "oracle",
+          "writable": true,
+          "signer": true,
+          "relations": [
+            "match_account"
+          ]
+        },
+        {
+          "name": "match_account",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  109,
+                  97,
+                  116,
+                  99,
+                  104
+                ]
+              },
+              {
+                "kind": "arg",
+                "path": "match_id"
+              }
+            ]
+          }
+        },
+        {
+          "name": "vault",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
+              },
+              {
+                "kind": "arg",
+                "path": "match_id"
+              }
+            ]
+          }
+        },
+        {
+          "name": "player_one_account",
+          "writable": true
+        },
+        {
+          "name": "player_two_account",
+          "writable": true
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "match_id",
+          "type": "string"
+        }
+      ]
+    },
+    {
+      "name": "settle",
+      "docs": [
+        "Oracle-only. Splits the pot: fee → treasury, remainder → winner.",
+        "`has_one = oracle` and the treasury constraint are enforced in the accounts struct."
+      ],
+      "discriminator": [
+        175,
+        42,
+        185,
+        87,
+        144,
+        131,
+        102,
+        212
+      ],
+      "accounts": [
+        {
+          "name": "oracle",
+          "docs": [
+            "Must be the oracle recorded at match creation (enforced by has_one)"
+          ],
+          "writable": true,
+          "signer": true,
+          "relations": [
+            "match_account"
+          ]
+        },
+        {
+          "name": "match_account",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  109,
+                  97,
+                  116,
+                  99,
+                  104
+                ]
+              },
+              {
+                "kind": "arg",
+                "path": "match_id"
+              }
+            ]
+          }
+        },
+        {
+          "name": "vault",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
+              },
+              {
+                "kind": "arg",
+                "path": "match_id"
+              }
+            ]
+          }
+        },
+        {
+          "name": "winner_account",
+          "writable": true
+        },
+        {
+          "name": "treasury",
+          "writable": true
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "match_id",
+          "type": "string"
+        },
+        {
+          "name": "winner",
+          "type": "pubkey"
+        }
+      ]
+    },
+    {
+      "name": "stake",
+      "docs": [
+        "P1 or P2 transfers stake_lamports into the vault.",
+        "When both have staked the match moves to Staked."
+      ],
+      "discriminator": [
+        206,
+        176,
+        202,
+        18,
+        200,
+        209,
+        179,
+        108
+      ],
+      "accounts": [
+        {
+          "name": "signer",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "match_account",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  109,
+                  97,
+                  116,
+                  99,
+                  104
+                ]
+              },
+              {
+                "kind": "arg",
+                "path": "match_id"
+              }
+            ]
+          }
+        },
+        {
+          "name": "vault",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
+              },
+              {
+                "kind": "arg",
+                "path": "match_id"
+              }
+            ]
+          }
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "_match_id",
+          "type": "string"
+        }
+      ]
+    }
+  ],
+  "accounts": [
+    {
+      "name": "Match",
+      "discriminator": [
+        236,
+        63,
+        169,
+        38,
+        15,
+        56,
+        196,
+        162
+      ]
+    }
+  ],
+  "errors": [
+    {
+      "code": 6000,
+      "name": "NotAPlayer",
+      "msg": "Signer is not a player in this match"
+    },
+    {
+      "code": 6001,
+      "name": "AlreadyStaked",
+      "msg": "This player has already staked"
+    },
+    {
+      "code": 6002,
+      "name": "NotStaked",
+      "msg": "Match must be in Staked state"
+    },
+    {
+      "code": 6003,
+      "name": "AlreadySettled",
+      "msg": "Match is already settled"
+    },
+    {
+      "code": 6004,
+      "name": "InvalidWinner",
+      "msg": "winner must be player_one or player_two"
+    },
+    {
+      "code": 6005,
+      "name": "MatchIdTooLong",
+      "msg": "match_id must be 32 characters or fewer"
+    },
+    {
+      "code": 6006,
+      "name": "FeeTooHigh",
+      "msg": "fee_bps cannot exceed 1000 (10%)"
+    },
+    {
+      "code": 6007,
+      "name": "Overflow",
+      "msg": "Arithmetic overflow"
+    }
+  ],
+  "types": [
+    {
+      "name": "Match",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "match_id",
+            "type": "string"
+          },
+          {
+            "name": "player_one",
+            "type": "pubkey"
+          },
+          {
+            "name": "player_two",
+            "type": "pubkey"
+          },
+          {
+            "name": "oracle",
+            "type": "pubkey"
+          },
+          {
+            "name": "treasury",
+            "type": "pubkey"
+          },
+          {
+            "name": "fee_bps",
+            "type": "u16"
+          },
+          {
+            "name": "stake_lamports",
+            "type": "u64"
+          },
+          {
+            "name": "p1_staked",
+            "type": "bool"
+          },
+          {
+            "name": "p2_staked",
+            "type": "bool"
+          },
+          {
+            "name": "state",
+            "type": {
+              "defined": {
+                "name": "MatchState"
+              }
+            }
+          },
+          {
+            "name": "winner",
+            "type": {
+              "option": "pubkey"
+            }
+          },
+          {
+            "name": "vault_bump",
+            "type": "u8"
+          }
+        ]
+      }
+    },
+    {
+      "name": "MatchState",
+      "type": {
+        "kind": "enum",
+        "variants": [
+          {
+            "name": "Open"
+          },
+          {
+            "name": "Staked"
+          },
+          {
+            "name": "Settled"
+          }
+        ]
+      }
+    }
+  ]
+}
