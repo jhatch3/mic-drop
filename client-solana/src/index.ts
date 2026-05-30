@@ -1,31 +1,63 @@
-import type { Keypair, PublicKey } from "@solana/web3.js";
+import type { Transaction, VersionedTransaction, Keypair, PublicKey } from "@solana/web3.js";
+
+// ─── Wallet signer interface ──────────────────────────────────────────────────
+// Compatible with both raw Keypairs (backend/tests) and @solana/wallet-adapter (frontend).
+
+export interface WalletSigner {
+  publicKey: PublicKey;
+  signTransaction<T extends Transaction | VersionedTransaction>(tx: T): Promise<T>;
+}
+
+/** Wrap a Keypair so it satisfies WalletSigner (for backend / test use). */
+export function keypairToSigner(kp: Keypair): WalletSigner {
+  return {
+    publicKey: kp.publicKey,
+    signTransaction: async <T extends Transaction | VersionedTransaction>(tx: T): Promise<T> => {
+      if ("sign" in tx) (tx as Transaction).sign([kp]);
+      return tx;
+    },
+  };
+}
+
+// ─── Shared state types ───���───────────────────────────────────────────────────
 
 export interface MatchState {
   matchId: string;
   stakeLamports: number;
+  treasury: string;   // base58
+  feeBps: number;
   p1Staked: boolean;
   p2Staked: boolean;
   state: "Open" | "Staked" | "Settled";
-  winner: string | null; // base58 pubkey
+  winner: string | null;
 }
 
+// ─── EscrowClient interface ───────────────────────────────────────────────────
+
 export interface EscrowClient {
-  /** P1 creates the match. oracle is the backend's pubkey that will call settle. */
+  /**
+   * P1 creates the match.
+   * - oracle: backend keypair that will call settle (never the frontend)
+   * - treasury: developer pubkey that receives fee_bps of the pot
+   * - feeBps: e.g. 100 = 1%, 1 = 0.01%
+   */
   createMatch(
     matchId: string,
     stakeLamports: number,
     p2: PublicKey,
     oracle: PublicKey,
-    p1Keypair: Keypair
+    treasury: PublicKey,
+    feeBps: number,
+    p1Signer: WalletSigner
   ): Promise<{ matchId: string }>;
 
-  /** Signer must be p1 or p2 on the match. */
-  stake(matchId: string, player: Keypair): Promise<string>;
+  /** P1 or P2 stakes — accepts a wallet adapter or wrapped keypair. */
+  stake(matchId: string, playerSigner: WalletSigner): Promise<string>;
 
-  /** Oracle only — backend keypair. Pays winner the full vault (2 × stake). */
+  /** Oracle only — backend. Sends (pot - fee) to winner, fee to treasury. */
   settle(matchId: string, winner: PublicKey, oracleKeypair: Keypair): Promise<string>;
 
-  /** Oracle only — tie case. Returns each player's stake. */
+  /** Oracle only — tie. Returns full stakes to both players, no fee. */
   refund(
     matchId: string,
     p1: PublicKey,
@@ -36,10 +68,8 @@ export interface EscrowClient {
   getMatch(matchId: string): Promise<MatchState>;
 }
 
-export { MockEscrowClient } from "./mock";
-export { DevnetEscrowClient } from "./devnet";
+// ─── PDA helpers ─────────────────────────────────────────────────────────────
 
-/** Derive the Match PDA for a given matchId and programId. */
 export function matchPda(matchId: string, programId: PublicKey): PublicKey {
   const { PublicKey } = require("@solana/web3.js");
   const [pda] = PublicKey.findProgramAddressSync(
@@ -49,7 +79,6 @@ export function matchPda(matchId: string, programId: PublicKey): PublicKey {
   return pda;
 }
 
-/** Derive the Vault PDA for a given matchId and programId. */
 export function vaultPda(matchId: string, programId: PublicKey): PublicKey {
   const { PublicKey } = require("@solana/web3.js");
   const [pda] = PublicKey.findProgramAddressSync(
@@ -58,3 +87,6 @@ export function vaultPda(matchId: string, programId: PublicKey): PublicKey {
   );
   return pda;
 }
+
+export { MockEscrowClient } from "./mock";
+export { DevnetEscrowClient } from "./devnet";

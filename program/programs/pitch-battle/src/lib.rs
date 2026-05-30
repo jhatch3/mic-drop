@@ -8,21 +8,26 @@ declare_id!("Fg6PaFpoGXkYsidMpWTK6W2BeZ7FEfcYkg476zPFsLnS");
 pub mod pitch_battle {
     use super::*;
 
-    /// P1 creates the match and records the oracle pubkey.
-    /// The vault PDA is derived here so its bump is stored for later CPI signing.
+    /// P1 creates the match and records the oracle, treasury, and fee.
+    /// fee_bps is in basis points: 100 = 1%, 1 = 0.01%.
     pub fn create_match(
         ctx: Context<CreateMatch>,
         match_id: String,
         stake_lamports: u64,
         player_two: Pubkey,
         oracle: Pubkey,
+        treasury: Pubkey,
+        fee_bps: u16,
     ) -> Result<()> {
         require!(match_id.len() <= 32, PitchError::MatchIdTooLong);
+        require!(fee_bps <= 1_000, PitchError::FeeTooHigh); // max 10%
         let m = &mut ctx.accounts.match_account;
         m.match_id = match_id;
         m.player_one = ctx.accounts.player_one.key();
         m.player_two = player_two;
         m.oracle = oracle;
+        m.treasury = treasury;
+        m.fee_bps = fee_bps;
         m.stake_lamports = stake_lamports;
         m.p1_staked = false;
         m.p2_staked = false;
@@ -76,8 +81,8 @@ pub mod pitch_battle {
         Ok(())
     }
 
-    /// Oracle-only. Transfers the full pot (2 × stake) from the vault to the winner.
-    /// `has_one = oracle` on the accounts struct enforces the oracle check.
+    /// Oracle-only. Splits the pot: fee → treasury, remainder → winner.
+    /// `has_one = oracle` and the treasury constraint are enforced in the accounts struct.
     pub fn settle(ctx: Context<Settle>, match_id: String, winner: Pubkey) -> Result<()> {
         let player_one = ctx.accounts.match_account.player_one;
         let player_two = ctx.accounts.match_account.player_two;
@@ -85,6 +90,7 @@ pub mod pitch_battle {
             .stake_lamports
             .checked_mul(2)
             .ok_or(PitchError::Overflow)?;
+        let fee_bps = ctx.accounts.match_account.fee_bps as u64;
         let vault_bump = ctx.accounts.match_account.vault_bump;
 
         require!(
@@ -96,10 +102,20 @@ pub mod pitch_battle {
             PitchError::InvalidWinner
         );
 
+        // fee = pot * fee_bps / 10_000  (rounds down, winner gets remainder)
+        let fee = pot
+            .checked_mul(fee_bps)
+            .ok_or(PitchError::Overflow)?
+            .checked_div(10_000)
+            .unwrap_or(0);
+        let winner_amount = pot.checked_sub(fee).ok_or(PitchError::Overflow)?;
+
         ctx.accounts.match_account.winner = Some(winner);
         ctx.accounts.match_account.state = MatchState::Settled;
 
         let seeds: &[&[u8]] = &[b"vault", match_id.as_bytes(), &[vault_bump]];
+
+        // Pay winner
         system_program::transfer(
             CpiContext::new_with_signer(
                 ctx.accounts.system_program.to_account_info(),
@@ -109,8 +125,23 @@ pub mod pitch_battle {
                 },
                 &[seeds],
             ),
-            pot,
+            winner_amount,
         )?;
+
+        // Pay treasury fee (skip if fee is 0)
+        if fee > 0 {
+            system_program::transfer(
+                CpiContext::new_with_signer(
+                    ctx.accounts.system_program.to_account_info(),
+                    system_program::Transfer {
+                        from: ctx.accounts.vault.to_account_info(),
+                        to: ctx.accounts.treasury.to_account_info(),
+                    },
+                    &[seeds],
+                ),
+                fee,
+            )?;
+        }
 
         Ok(())
     }
@@ -168,10 +199,12 @@ pub enum MatchState {
 
 #[account]
 pub struct Match {
-    pub match_id: String,       // 4 + 32 bytes max
+    pub match_id: String,       // 4 + 32 bytes max = 36
     pub player_one: Pubkey,     // 32
     pub player_two: Pubkey,     // 32
     pub oracle: Pubkey,         // 32
+    pub treasury: Pubkey,       // 32  ← developer fee destination
+    pub fee_bps: u16,           // 2   ← basis points (100 = 1%)
     pub stake_lamports: u64,    // 8
     pub p1_staked: bool,        // 1
     pub p2_staked: bool,        // 1
@@ -181,8 +214,8 @@ pub struct Match {
 }
 
 impl Match {
-    // 8 (discriminator) + 36 + 32 + 32 + 32 + 8 + 1 + 1 + 1 + 33 + 1
-    pub const SIZE: usize = 185;
+    // 8 (discriminator) + 36 + 32*4 + 2 + 8 + 1 + 1 + 1 + 33 + 1
+    pub const SIZE: usize = 219;
 }
 
 // ─── Errors ───────────────────────────────────────────────────────────────────
@@ -201,6 +234,8 @@ pub enum PitchError {
     InvalidWinner,
     #[msg("match_id must be 32 characters or fewer")]
     MatchIdTooLong,
+    #[msg("fee_bps cannot exceed 1000 (10%)")]
+    FeeTooHigh,
     #[msg("Arithmetic overflow")]
     Overflow,
 }
@@ -280,9 +315,16 @@ pub struct Settle<'info> {
     )]
     pub vault: SystemAccount<'info>,
 
-    /// CHECK: receives 2 × stake_lamports
+    /// CHECK: receives pot minus fee; must be player_one or player_two (checked in handler)
     #[account(mut)]
     pub winner_account: SystemAccount<'info>,
+
+    /// CHECK: receives platform fee; must match match_account.treasury
+    #[account(
+        mut,
+        constraint = treasury.key() == match_account.treasury @ PitchError::InvalidWinner,
+    )]
+    pub treasury: SystemAccount<'info>,
 
     pub system_program: Program<'info, System>,
 }
