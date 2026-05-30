@@ -3,6 +3,18 @@ import { useState, useEffect, useRef, useCallback } from "react";
 // ─── Types ────────────────────────────────────────────────────────────────────
 interface LyricLine { t: number; end: number; text: string; }
 interface ContourFrame { t: number; midi: number | null; voiced: boolean; }
+interface Word { word: string; start: number; end: number; }
+
+// Split a lyric line into words with linearly interpolated timestamps
+function wordsForLine(line: LyricLine): Word[] {
+  const tokens = line.text.split(/\s+/).filter(Boolean);
+  const dur = line.end - line.t;
+  return tokens.map((word, i) => ({
+    word,
+    start: line.t + (i / tokens.length) * dur,
+    end:   line.t + ((i + 1) / tokens.length) * dur,
+  }));
+}
 
 const SONG = {
   audio:   "/songs/firework/instrumental.mp3",
@@ -242,21 +254,48 @@ export default function Karaoke() {
         {lines.map((line, i) => {
           const isActive = i === activeIdx;
           const isPast   = i < activeIdx;
+          const words    = isActive ? wordsForLine(line) : null;
           return (
             <div
               key={i}
               ref={isActive ? activeLyricRef : undefined}
               style={{
                 ...s.lyricLine,
-                color:      isActive ? "#facc15" : isPast ? "#374151" : "#9ca3af",
-                fontSize:   isActive ? 30 : 20,
+                fontSize:   isActive ? 32 : 20,
                 fontWeight: isActive ? 800 : 400,
                 transform:  isActive ? "scale(1.05)" : "scale(1)",
-                textShadow: isActive ? "0 0 24px #facc1588" : "none",
                 transition: "all 0.15s ease",
               }}
             >
-              {line.text}
+              {isActive && words ? (
+                // Word-by-word fluid wipe for the active line
+                <span style={{ display: "flex", flexWrap: "wrap", justifyContent: "center", gap: "0 10px" }}>
+                  {words.map((w, wi) => {
+                    const ct = audioRef.current?.currentTime ?? 0;
+                    const progress = ct <= w.start ? 0
+                      : ct >= w.end ? 100
+                      : Math.round(((ct - w.start) / (w.end - w.start)) * 100);
+                    return (
+                      <span
+                        key={wi}
+                        style={{
+                          background: `linear-gradient(to right, #facc15 ${progress}%, #9ca3af ${progress}%)`,
+                          WebkitBackgroundClip: "text",
+                          WebkitTextFillColor: "transparent",
+                          backgroundClip: "text",
+                          textShadow: "none",
+                          filter: progress > 0 ? `drop-shadow(0 0 8px #facc1566)` : "none",
+                          transition: "filter 0.1s",
+                        }}
+                      >
+                        {w.word}
+                      </span>
+                    );
+                  })}
+                </span>
+              ) : (
+                <span style={{ color: isPast ? "#2d3748" : "#6b7280" }}>{line.text}</span>
+              )}
             </div>
           );
         })}
