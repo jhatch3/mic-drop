@@ -1,8 +1,26 @@
-fastapi
-uvicorn[standard]
-python-multipart
-librosa
-numpy
-soundfile
-snowflake-connector-python
+# Pitch Battle backend (Streams B + D)
+# Python 3.13. Install: python -m venv .venv && .venv/bin/pip install -r requirements.txt
+
+# --- web ---
+fastapi==0.136.3
+uvicorn[standard]==0.48.0
+python-multipart==0.0.29
 python-dotenv
+
+# --- audio ingest + STT (speech-agent) ---
+numpy==2.4.6
+soundfile==0.13.1
+av==17.0.1                 # PyAV bundles ffmpeg libs — no system ffmpeg needed
+faster-whisper==1.2.1      # local speech-to-text with word timestamps
+rapidfuzz==3.14.5          # lenient lyrics scoring
+
+# --- Stream B: pitch scoring + song prep ---
+librosa
+
+# --- Stream D: data ---
+snowflake-connector-python
+
+# --- added by other Stream D phases (not yet wired) ---
+# google-generativeai      # Gemini commentary
+# elevenlabs               # MC voice
+# torch / torchcrepe       # Stream B: real pitch scoring (heavyweight)

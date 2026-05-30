@@ -1,0 +1,130 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Pitch Battle — Mic STT Test</title>
+<style>
+  :root { color-scheme: dark; }
+  body { font-family: system-ui, sans-serif; max-width: 640px; margin: 40px auto;
+         padding: 0 16px; background: #111; color: #eee; }
+  h1 { font-size: 1.3rem; }
+  button { font-size: 1rem; padding: 10px 18px; border-radius: 8px; border: 0;
+           cursor: pointer; }
+  #rec { background: #e63946; color: #fff; }
+  #rec.recording { background: #457b9d; }
+  #rec:disabled { opacity: .5; cursor: default; }
+  textarea { width: 100%; box-sizing: border-box; background: #1b1b1b; color: #eee;
+             border: 1px solid #333; border-radius: 8px; padding: 8px; }
+  label { display: block; margin: 16px 0 6px; font-size: .9rem; color: #aaa; }
+  pre { background: #1b1b1b; border: 1px solid #333; border-radius: 8px; padding: 12px;
+        white-space: pre-wrap; word-break: break-word; }
+  .status { margin: 12px 0; color: #9ad; min-height: 1.2em; }
+  .score { font-size: 2rem; font-weight: 700; }
+  .words span { display: inline-block; margin: 2px 4px; padding: 2px 6px;
+                background: #233; border-radius: 4px; font-size: .85rem; }
+  .muted { color: #888; font-size: .8rem; }
+</style>
+</head>
+<body>
+<h1>🎤 Pitch Battle — Mic STT Test</h1>
+<p class="muted">Records from your mic (webm/opus), uploads to <code>/api/transcribe</code>,
+shows the transcript, word timestamps, and (if you give reference lyrics) a lyrics score.
+Provider is whatever <code>STT_PROVIDER</code> is set to on the server.</p>
+
+<label for="ref">Reference lyrics (optional — for a lyrics score)</label>
+<textarea id="ref" rows="2" placeholder="e.g. twinkle twinkle little star how I wonder what you are"></textarea>
+
+<p style="margin-top:20px">
+  <button id="rec">● Start recording</button>
+</p>
+
+<div class="status" id="status">Click “Start recording”, allow mic access, sing/talk, then stop.</div>
+
+<div id="out" hidden>
+  <label>Provider</label><div id="provider"></div>
+  <label>Lyrics score</label><div class="score" id="lyrics">—</div>
+  <label>Transcript</label><pre id="transcript"></pre>
+  <label>Words</label><div class="words" id="wordlist"></div>
+</div>
+
+<script>
+const recBtn = document.getElementById("rec");
+const statusEl = document.getElementById("status");
+const out = document.getElementById("out");
+let mediaRecorder = null, chunks = [], recording = false;
+
+recBtn.onclick = async () => {
+  if (!recording) {
+    let stream;
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    } catch (e) {
+      statusEl.textContent = "Mic access denied: " + e.message;
+      return;
+    }
+    chunks = [];
+    mediaRecorder = new MediaRecorder(stream);
+    mediaRecorder.ondataavailable = (e) => { if (e.data.size) chunks.push(e.data); };
+    mediaRecorder.onstop = () => {
+      stream.getTracks().forEach(t => t.stop());
+      upload(new Blob(chunks, { type: mediaRecorder.mimeType || "audio/webm" }));
+    };
+    mediaRecorder.start();
+    recording = true;
+    recBtn.textContent = "■ Stop recording";
+    recBtn.classList.add("recording");
+    statusEl.textContent = "Recording… click stop when done.";
+  } else {
+    recording = false;
+    recBtn.textContent = "● Start recording";
+    recBtn.classList.remove("recording");
+    statusEl.textContent = "Uploading & transcribing…";
+    mediaRecorder.stop();
+  }
+};
+
+async function upload(blob) {
+  recBtn.disabled = true;
+  const fd = new FormData();
+  const ext = (blob.type.includes("ogg")) ? "ogg" : "webm";
+  fd.append("take", blob, "take." + ext);
+  const ref = document.getElementById("ref").value.trim();
+  if (ref) fd.append("reference_lyrics", ref);
+
+  const t0 = performance.now();
+  try {
+    const res = await fetch("/api/transcribe", { method: "POST", body: fd });
+    const ms = Math.round(performance.now() - t0);
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      statusEl.textContent = `Error ${res.status}: ${err.detail || res.statusText}`;
+      return;
+    }
+    const data = await res.json();
+    render(data, ms, Math.round(blob.size / 1024));
+    statusEl.textContent = `Done in ${ms} ms (${Math.round(blob.size/1024)} KB uploaded).`;
+  } catch (e) {
+    statusEl.textContent = "Request failed: " + e.message;
+  } finally {
+    recBtn.disabled = false;
+  }
+}
+
+function render(data) {
+  out.hidden = false;
+  document.getElementById("provider").textContent = data.provider;
+  document.getElementById("transcript").textContent = data.transcript || "(empty)";
+  document.getElementById("lyrics").textContent =
+    (data.lyrics_score ?? null) === null ? "— (no reference lyrics)" : data.lyrics_score;
+  const wl = document.getElementById("wordlist");
+  wl.innerHTML = "";
+  (data.words || []).forEach(w => {
+    const s = document.createElement("span");
+    s.textContent = `${w.word} (${w.start}s)`;
+    wl.appendChild(s);
+  });
+}
+</script>
+</body>
+</html>

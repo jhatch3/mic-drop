@@ -1,0 +1,92 @@
+"""Reference-track endpoint (Stream D).
+
+POST /api/reference — accept an uploaded video/audio file (mp4, webm, mp3, wav…),
+extract its audio, and return a pitch contour to sing against. PyAV pulls the
+audio stream out of the container, so an mp4 with an audio track works directly.
+
+The returned contour shares the live stream's hop, so the browser can overlay it
+on the live graph and the server can score a take against it (see
+common/pitch.score_contours).
+"""
+
+from __future__ import annotations
+
+import asyncio
+
+from fastapi import APIRouter, File, HTTPException, UploadFile
+
+from common.audio import DEFAULT_SR, AudioDecodeError, load_audio
+from common.pitch import HOP, contour_from_audio
+from .align import align_song, parse_lrc
+from .lyrics_lookup import fetch_lyrics
+
+router = APIRouter()
+
+
+def _extract(data: bytes) -> dict:
+    audio = load_audio(data)
+    contour = contour_from_audio(audio)
+    return {
+        "duration": round(audio.size / DEFAULT_SR, 2),
+        "hop_sec": round(HOP / DEFAULT_SR, 4),
+        "contour": contour,
+    }
+
+
+@router.post("/reference")
+async def reference(file: UploadFile = File(...)) -> dict:
+    data = await file.read()
+    if not data:
+        raise HTTPException(status_code=400, detail="empty file")
+    try:
+        # Decode + full-file pitch extraction is heavy — keep it off the loop.
+        return await asyncio.to_thread(_extract, data)
+    except AudioDecodeError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.get("/lyrics")
+async def lyrics(
+    track: str,
+    artist: str | None = None,
+    album: str | None = None,
+    duration: int | None = None,
+) -> dict:
+    """Pull real reference lyrics for a song from LRCLIB (free, no key)."""
+    result = await asyncio.to_thread(fetch_lyrics, track, artist, album, duration)
+    if result is None:
+        raise HTTPException(status_code=404, detail="no lyrics found for that song")
+    return result
+
+
+def _align(data: bytes, track: str, artist: str | None) -> dict:
+    lookup = fetch_lyrics(track, artist)
+    if not lookup or not lookup.get("synced_lyrics"):
+        raise ValueError("no synced lyrics found for that song")
+    lrc = parse_lrc(lookup["synced_lyrics"])
+    audio = load_audio(data)
+    lines = align_song(audio, lrc)
+    return {
+        "track": lookup.get("track"),
+        "artist": lookup.get("artist"),
+        "duration": round(audio.size / DEFAULT_SR, 2),
+        "lines": lines,
+    }
+
+
+@router.post("/align")
+async def align(
+    file: UploadFile = File(...),
+    track: str = Form(...),
+    artist: str | None = Form(None),
+) -> dict:
+    """Forced-align a song's LRCLIB lyrics to the uploaded audio → word timings."""
+    data = await file.read()
+    if not data:
+        raise HTTPException(status_code=400, detail="empty file")
+    try:
+        return await asyncio.to_thread(_align, data, track, artist)
+    except AudioDecodeError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
