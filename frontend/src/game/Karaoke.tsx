@@ -1,6 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 
-// ─── Types ────────────────────────────────────────────────────────────────────
 interface LyricLine { t: number; end: number; text: string; }
 interface ContourFrame { t: number; midi: number | null; voiced: boolean; }
 interface Word { word: string; start: number; end: number; }
@@ -23,21 +22,19 @@ const SONG = {
   artist:  "Katy Perry",
 };
 
-// ─── Pitch detection ──────────────────────────────────────────────────────────
-const SR = 44100;
-const FMIN = 65;
-const FMAX = 1000;
-const RMS_GATE = 0.003;
-const CONF_MIN = 0.5;
+const SR = 44100, FMIN = 65, FMAX = 1000, RMS_GATE = 0.003, CONF_MIN = 0.5;
+const NOTE_NAMES = ["C","C#","D","D#","E","F","F#","G","G#","A","A#","B"];
+function noteFromMidi(midi: number) {
+  const n = Math.round(midi);
+  return NOTE_NAMES[((n % 12) + 12) % 12] + Math.floor(n / 12 - 1);
+}
 
 function detectPitch(buf: Float32Array): { midi: number | null; conf: number } {
   const n = buf.length;
   let rms = 0;
   for (let i = 0; i < n; i++) rms += buf[i] * buf[i];
-  rms = Math.sqrt(rms / n);
-  if (rms < RMS_GATE) return { midi: null, conf: 0 };
-  const minLag = Math.floor(SR / FMAX);
-  const maxLag = Math.min(n - 1, Math.floor(SR / FMIN));
+  if (Math.sqrt(rms / n) < RMS_GATE) return { midi: null, conf: 0 };
+  const minLag = Math.floor(SR / FMAX), maxLag = Math.min(n - 1, Math.floor(SR / FMIN));
   let best = -1, bestVal = -Infinity;
   for (let lag = minLag; lag <= maxLag; lag++) {
     let sum = 0;
@@ -56,108 +53,102 @@ function centsError(singer: number, target: number) {
   return (diff - 12 * Math.round(diff / 12)) * 100;
 }
 
-// ─── Pitch graph ──────────────────────────────────────────────────────────────
 function drawGraph(
   canvas: HTMLCanvasElement | null,
   points: { t: number; target: number | null; singer: number | null }[],
-  now: number,
-  win: number,
+  now: number, win: number,
 ) {
   if (!canvas) return;
   const ctx = canvas.getContext("2d");
   if (!ctx) return;
   const W = canvas.width, H = canvas.height;
   ctx.clearRect(0, 0, W, H);
-
-  ctx.fillStyle = "#080810";
+  ctx.fillStyle = "#07070f";
   ctx.fillRect(0, 0, W, H);
 
   const MIDI_MIN = 48, MIDI_MAX = 84;
-  const midiToY = (m: number) => H - ((m - MIDI_MIN) / (MIDI_MAX - MIDI_MIN)) * H;
-  const tToX    = (t: number) => ((t - (now - win)) / win) * W;
+  const toY = (m: number) => H - ((m - MIDI_MIN) / (MIDI_MAX - MIDI_MIN)) * H;
+  const toX = (t: number) => ((t - (now - win)) / win) * W;
 
-  // Grid
-  ctx.strokeStyle = "#ffffff08";
+  // Subtle grid
+  ctx.strokeStyle = "#ffffff06";
   ctx.lineWidth = 1;
   for (let m = MIDI_MIN; m <= MIDI_MAX; m += 3) {
-    const y = midiToY(m);
+    const y = toY(m);
     ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(W, y); ctx.stroke();
-    // Note labels
-    const name = NOTE_NAMES[m % 12];
-    if (name && !name.includes("#")) {
-      ctx.fillStyle = "#ffffff18";
-      ctx.font = "10px monospace";
-      ctx.fillText(name + Math.floor(m / 12 - 1), 4, y - 2);
+    if (NOTE_NAMES[m % 12] && !NOTE_NAMES[m % 12].includes("#")) {
+      ctx.fillStyle = "#ffffff15";
+      ctx.font = "9px monospace";
+      ctx.fillText(NOTE_NAMES[m % 12] + Math.floor(m / 12 - 1), 4, y - 3);
     }
   }
 
-  // Target — thick glowing purple
+  // Target — purple glow
   ctx.save();
-  ctx.shadowColor = "#a78bfa88";
-  ctx.shadowBlur = 8;
-  ctx.strokeStyle = "#a78bfa";
-  ctx.lineWidth = 4;
-  ctx.lineJoin = "round";
-  ctx.lineCap = "round";
+  ctx.shadowColor = "#a78bfa"; ctx.shadowBlur = 12;
+  ctx.strokeStyle = "#a78bfa"; ctx.lineWidth = 3;
+  ctx.lineJoin = "round"; ctx.lineCap = "round";
   ctx.beginPath();
-  let started = false;
+  let on = false;
   for (const p of points) {
-    if (p.target === null) { started = false; continue; }
-    const x = tToX(p.t), y = midiToY(p.target);
-    if (!started) { ctx.moveTo(x, y); started = true; } else ctx.lineTo(x, y);
+    if (!p.target) { on = false; continue; }
+    const x = toX(p.t), y = toY(p.target);
+    on ? ctx.lineTo(x, y) : ctx.moveTo(x, y); on = true;
   }
-  ctx.stroke();
-  ctx.restore();
+  ctx.stroke(); ctx.restore();
 
-  // Singer — glowing yellow
+  // Singer — yellow glow
   ctx.save();
-  ctx.shadowColor = "#facc1588";
-  ctx.shadowBlur = 10;
-  ctx.strokeStyle = "#facc15";
-  ctx.lineWidth = 3;
-  ctx.lineJoin = "round";
-  ctx.lineCap = "round";
-  ctx.beginPath();
-  started = false;
+  ctx.shadowColor = "#facc15"; ctx.shadowBlur = 14;
+  ctx.strokeStyle = "#facc15"; ctx.lineWidth = 2.5;
+  ctx.lineJoin = "round"; ctx.lineCap = "round";
+  ctx.beginPath(); on = false;
   for (const p of points) {
-    if (p.singer === null) { started = false; continue; }
-    const x = tToX(p.t), y = midiToY(p.singer);
-    if (!started) { ctx.moveTo(x, y); started = true; } else ctx.lineTo(x, y);
+    if (!p.singer) { on = false; continue; }
+    const x = toX(p.t), y = toY(p.singer);
+    on ? ctx.lineTo(x, y) : ctx.moveTo(x, y); on = true;
   }
-  ctx.stroke();
-  ctx.restore();
+  ctx.stroke(); ctx.restore();
 
-  // Legend
-  ctx.font = "bold 11px system-ui";
-  ctx.fillStyle = "#a78bfa"; ctx.fillText("● Target", 10, H - 20);
-  ctx.fillStyle = "#facc15"; ctx.fillText("● You",    10, H - 6);
+  // Legend pills
+  const pill = (label: string, color: string, x: number) => {
+    ctx.font = "bold 10px system-ui";
+    const w = ctx.measureText(label).width + 16;
+    ctx.fillStyle = color + "22";
+    ctx.beginPath();
+    ctx.roundRect(x, H - 22, w, 16, 4);
+    ctx.fill();
+    ctx.fillStyle = color;
+    ctx.fillText(label, x + 8, H - 11);
+  };
+  pill("● Target", "#a78bfa", 8);
+  pill("● You",    "#facc15", 90);
 }
 
-// ─── Component ────────────────────────────────────────────────────────────────
+// ─── Main component ───────────────────────────────────────────────────────────
 export default function Karaoke() {
-  const [lines, setLines]         = useState<LyricLine[]>([]);
-  const [contour, setContour]     = useState<ContourFrame[]>([]);
-  const [activeIdx, setActiveIdx] = useState(-1);
-  const [playing, setPlaying]     = useState(false);
-  const [micOn, setMicOn]         = useState(false);
-  const [score, setScore]         = useState(0);
-  const [hits, setHits]           = useState(0);
-  const [scored, setScored]       = useState(0);
-  const [liveMidi, setLiveMidi]   = useState<number | null>(null);
+  const [lines, setLines]           = useState<LyricLine[]>([]);
+  const [contour, setContour]       = useState<ContourFrame[]>([]);
+  const [activeIdx, setActiveIdx]   = useState(-1);
+  const [playing, setPlaying]       = useState(false);
+  const [micOn, setMicOn]           = useState(false);
+  const [score, setScore]           = useState(0);
+  const [hits, setHits]             = useState(0);
+  const [scored, setScored]         = useState(0);
+  const [liveMidi, setLiveMidi]     = useState<number | null>(null);
   const [targetMidi, setTargetMidi] = useState<number | null>(null);
   const [currentTime, setCurrentTime] = useState(0);
+  const [duration, setDuration]     = useState(0);
 
-  const audioRef      = useRef<HTMLAudioElement>(null);
-  const rafRef        = useRef<number>(0);
+  const audioRef       = useRef<HTMLAudioElement>(null);
+  const rafRef         = useRef<number>(0);
   const activeLyricRef = useRef<HTMLDivElement>(null);
-  const ctxRef        = useRef<AudioContext | null>(null);
-  const analyserRef   = useRef<AnalyserNode | null>(null);
-  const streamRef     = useRef<MediaStream | null>(null);
-  const hitsRef       = useRef(0);
-  const scoredRef     = useRef(0);
-  const canvasRef     = useRef<HTMLCanvasElement>(null);
-  const graphRef      = useRef<{ t: number; target: number | null; singer: number | null }[]>([]);
-  const GRAPH_WIN     = 6;
+  const ctxRef         = useRef<AudioContext | null>(null);
+  const analyserRef    = useRef<AnalyserNode | null>(null);
+  const streamRef      = useRef<MediaStream | null>(null);
+  const hitsRef        = useRef(0), scoredRef = useRef(0);
+  const canvasRef      = useRef<HTMLCanvasElement>(null);
+  const graphRef       = useRef<{ t: number; target: number | null; singer: number | null }[]>([]);
 
   useEffect(() => {
     fetch(SONG.lyrics).then(r => r.json()).then(d => setLines(d.lines));
@@ -169,35 +160,25 @@ export default function Karaoke() {
     if (!audio) return;
     const t = audio.currentTime;
     setCurrentTime(t);
-    setActiveIdx(() => {
-      const idx = lines.findIndex(l => t >= l.t && t < l.end);
-      return idx === -1 ? -1 : idx;
-    });
+    setActiveIdx(lines.findIndex(l => t >= l.t && t < l.end));
 
     if (analyserRef.current && contour.length > 0) {
       const buf = new Float32Array(analyserRef.current.fftSize);
       analyserRef.current.getFloatTimeDomainData(buf);
       const { midi, conf } = detectPitch(buf);
       setLiveMidi(midi);
-
       const target = contour.find(f => f.voiced && f.midi !== null && Math.abs(f.t - t) <= 0.03) ?? null;
       setTargetMidi(target?.midi ?? null);
-
       if (target?.midi != null) {
         scoredRef.current++;
-        if (midi !== null && conf >= CONF_MIN && Math.abs(centsError(midi, target.midi)) <= 50) {
-          hitsRef.current++;
-        }
-        setHits(hitsRef.current);
-        setScored(scoredRef.current);
+        if (midi && conf >= CONF_MIN && Math.abs(centsError(midi, target.midi)) <= 50) hitsRef.current++;
+        setHits(hitsRef.current); setScored(scoredRef.current);
         setScore(Math.round(100 * hitsRef.current / scoredRef.current));
       }
-
       graphRef.current.push({ t, target: target?.midi ?? null, singer: midi });
-      graphRef.current = graphRef.current.filter(p => p.t >= t - GRAPH_WIN);
-      drawGraph(canvasRef.current, graphRef.current, t, GRAPH_WIN);
+      graphRef.current = graphRef.current.filter(p => p.t >= t - 6);
+      drawGraph(canvasRef.current, graphRef.current, t, 6);
     }
-
     rafRef.current = requestAnimationFrame(tick);
   }, [lines, contour]);
 
@@ -217,181 +198,175 @@ export default function Karaoke() {
     const ctx = new AudioContext({ sampleRate: SR });
     ctxRef.current = ctx;
     const src = ctx.createMediaStreamSource(stream);
-    const an  = ctx.createAnalyser();
-    an.fftSize = 2048;
-    src.connect(an);
-    analyserRef.current = an;
+    const an = ctx.createAnalyser(); an.fftSize = 2048;
+    src.connect(an); analyserRef.current = an;
     setMicOn(true);
   }, []);
 
-  const stopMic = useCallback(() => {
-    streamRef.current?.getTracks().forEach(t => t.stop());
-    ctxRef.current?.close();
-    analyserRef.current = null;
-    setMicOn(false);
-  }, []);
-
   const togglePlay = useCallback(async () => {
-    const audio = audioRef.current;
-    if (!audio) return;
+    const audio = audioRef.current; if (!audio) return;
     if (playing) { audio.pause(); setPlaying(false); }
-    else {
-      if (!micOn) await startMic();
-      await audio.play();
-      setPlaying(true);
-    }
+    else { if (!micOn) await startMic(); await audio.play(); setPlaying(true); }
   }, [playing, micOn, startMic]);
 
   const restart = useCallback(async () => {
-    const audio = audioRef.current;
-    if (!audio) return;
+    const audio = audioRef.current; if (!audio) return;
     audio.currentTime = 0;
-    hitsRef.current = 0; scoredRef.current = 0;
-    graphRef.current = [];
+    hitsRef.current = 0; scoredRef.current = 0; graphRef.current = [];
     setHits(0); setScored(0); setScore(0); setActiveIdx(-1); setCurrentTime(0);
     if (!micOn) await startMic();
-    await audio.play();
-    setPlaying(true);
+    await audio.play(); setPlaying(true);
   }, [micOn, startMic]);
 
-  useEffect(() => () => { stopMic(); cancelAnimationFrame(rafRef.current); }, [stopMic]);
+  useEffect(() => () => {
+    streamRef.current?.getTracks().forEach(t => t.stop());
+    ctxRef.current?.close();
+    cancelAnimationFrame(rafRef.current);
+  }, []);
 
+  const progress = duration > 0 ? (currentTime / duration) * 100 : 0;
   const scoreColor = score >= 80 ? "#4ade80" : score >= 50 ? "#facc15" : "#f87171";
-  const audio = audioRef.current;
-  const progress = audio?.duration ? (currentTime / audio.duration) * 100 : 0;
+  const fmt = (s: number) => `${Math.floor(s / 60)}:${Math.floor(s % 60).toString().padStart(2, "0")}`;
+
+  // Show active + 2 before + 3 after for context
+  const visibleLines = lines.filter((_, i) =>
+    i >= Math.max(0, activeIdx - 2) && i <= activeIdx + 3
+  );
 
   return (
-    <div style={s.root}>
-      <audio ref={audioRef} src={SONG.audio} onEnded={() => setPlaying(false)} />
+    <div style={{ minHeight: "100vh", background: "#07070f", color: "#fff", fontFamily: "'Inter', system-ui, sans-serif", display: "flex", flexDirection: "column" }}>
+      <audio
+        ref={audioRef}
+        src={SONG.audio}
+        onLoadedMetadata={e => setDuration((e.target as HTMLAudioElement).duration)}
+        onEnded={() => setPlaying(false)}
+      />
 
-      {/* Header */}
-      <div style={s.header}>
-        <div>
-          <div style={s.songTitle}>{SONG.title}</div>
-          <div style={s.songArtist}>{SONG.artist}</div>
+      {/* Top bar */}
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "16px 24px", borderBottom: "1px solid #0f0f1a" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+          <div style={{ width: 36, height: 36, borderRadius: 8, background: "linear-gradient(135deg,#7c3aed,#4f46e5)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 18 }}>🎤</div>
+          <div>
+            <div style={{ fontWeight: 700, fontSize: 15 }}>{SONG.title}</div>
+            <div style={{ color: "#4b5563", fontSize: 12 }}>{SONG.artist}</div>
+          </div>
         </div>
-        <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-          {micOn && <span style={s.micPill}>🎤 Live</span>}
-          <button onClick={restart} style={s.btnGhost}>↺</button>
-          <button onClick={togglePlay} style={s.btnPrimary}>
+
+        {/* Score badge */}
+        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          {micOn && <div style={{ fontSize: 11, color: "#f87171", background: "#f8717115", border: "1px solid #f8717130", borderRadius: 20, padding: "3px 10px" }}>● REC</div>}
+          <div style={{ background: "#0f0f1a", border: "1px solid #1a1a2e", borderRadius: 12, padding: "6px 16px", textAlign: "center" }}>
+            <div style={{ fontSize: 10, color: "#4b5563", letterSpacing: 2, textTransform: "uppercase" }}>Score</div>
+            <div style={{ fontSize: 26, fontWeight: 900, color: scoreColor, lineHeight: 1 }}>{score}</div>
+          </div>
+          <button onClick={restart} style={{ background: "transparent", border: "1px solid #1f2937", borderRadius: 10, color: "#6b7280", padding: "8px 14px", cursor: "pointer", fontSize: 18 }}>↺</button>
+          <button onClick={togglePlay} style={{ background: playing ? "#1f2937" : "linear-gradient(135deg,#7c3aed,#6d28d9)", border: "none", borderRadius: 10, color: "#fff", padding: "10px 22px", cursor: "pointer", fontWeight: 700, fontSize: 14 }}>
             {playing ? "⏸ Pause" : "▶ Sing"}
           </button>
         </div>
       </div>
 
-      {/* Progress */}
-      <div style={s.progressTrack}>
-        <div style={{ ...s.progressFill, width: `${progress}%` }} />
+      {/* Progress bar */}
+      <div style={{ height: 2, background: "#0f0f1a" }}>
+        <div style={{ height: "100%", width: `${progress}%`, background: "linear-gradient(to right, #7c3aed, #a78bfa)", transition: "width 0.1s linear" }} />
+      </div>
+      <div style={{ display: "flex", justifyContent: "space-between", padding: "4px 24px", fontSize: 10, color: "#374151", fontFamily: "monospace" }}>
+        <span>{fmt(currentTime)}</span>
+        <span>{fmt(duration)}</span>
       </div>
 
-      {/* HUD */}
-      <div style={s.hud}>
-        <div style={s.hudCard}>
-          <div style={s.hudLabel}>Score</div>
-          <div style={{ fontSize: 42, fontWeight: 900, color: scoreColor, lineHeight: 1 }}>{score}</div>
-          <div style={{ color: "#4b5563", fontSize: 11, marginTop: 2 }}>{hits}/{scored} hits</div>
-        </div>
-        <div style={s.hudCard}>
-          <div style={s.hudLabel}>You</div>
-          <div style={{ fontSize: 22, fontWeight: 700, color: liveMidi ? "#facc15" : "#374151", fontFamily: "monospace" }}>
-            {liveMidi ? noteFromMidi(liveMidi) : "—"}
-          </div>
-          <div style={{ color: "#4b5563", fontSize: 11 }}>{liveMidi ? liveMidi.toFixed(1) : "silent"}</div>
-        </div>
-        <div style={s.hudCard}>
-          <div style={s.hudLabel}>Target</div>
-          <div style={{ fontSize: 22, fontWeight: 700, color: targetMidi ? "#a78bfa" : "#374151", fontFamily: "monospace" }}>
-            {targetMidi ? noteFromMidi(targetMidi) : "—"}
-          </div>
-          <div style={{ color: "#4b5563", fontSize: 11 }}>{targetMidi ? targetMidi.toFixed(1) : "rest"}</div>
-        </div>
-      </div>
+      {/* Main content: lyrics left, graph + stats right */}
+      <div style={{ flex: 1, display: "grid", gridTemplateColumns: "1fr 380px", gap: 0 }}>
 
-      {/* Pitch graph */}
-      <div style={{ position: "relative", borderRadius: 12, overflow: "hidden", border: "1px solid #1a1a1a" }}>
-        <canvas ref={canvasRef} width={900} height={160} style={{ width: "100%", height: 160, display: "block" }} />
-        {!playing && (
-          <div style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", background: "#080810cc", color: "#4b5563", fontSize: 13, letterSpacing: 1 }}>
-            PITCH GRAPH — press Sing to begin
-          </div>
-        )}
-      </div>
-
-      {/* Lyrics */}
-      <div style={s.lyricsBox}>
-        {lines.length === 0 && <div style={{ color: "#374151" }}>Loading…</div>}
-        {lines.map((line, i) => {
-          const isActive = i === activeIdx;
-          const isPast   = i < activeIdx;
-          const words    = isActive ? wordsForLine(line) : null;
-          return (
-            <div
-              key={i}
-              ref={isActive ? activeLyricRef : undefined}
-              style={{
-                textAlign: "center",
-                fontSize:   isActive ? 34 : isPast ? 18 : 20,
-                fontWeight: isActive ? 800 : 400,
-                transform:  isActive ? "scale(1.04)" : "scale(1)",
-                transition: "all 0.2s ease",
-                maxWidth: 680,
-                lineHeight: 1.2,
-              }}
-            >
-              {isActive && words ? (
-                <span style={{ display: "flex", flexWrap: "wrap", justifyContent: "center", gap: "0 12px" }}>
-                  {words.map((w, wi) => {
-                    const ct = currentTime;
-                    const pct = ct <= w.start ? 0 : ct >= w.end ? 100
-                      : Math.round(((ct - w.start) / (w.end - w.start)) * 100);
-                    return (
-                      // Double-span overlay: gray base, gold clip on top
-                      <span key={wi} style={{ position: "relative", display: "inline-block", color: "#6b7280" }}>
-                        {w.word}
-                        <span style={{
-                          position: "absolute", left: 0, top: 0,
-                          color: "#facc15",
-                          overflow: "hidden",
-                          width: `${pct}%`,
-                          whiteSpace: "nowrap",
-                          textShadow: "0 0 12px #facc1566",
-                        }}>
+        {/* Lyrics panel */}
+        <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", padding: "40px 48px", gap: 20, borderRight: "1px solid #0f0f1a", minHeight: 400 }}>
+          {lines.length === 0 && <div style={{ color: "#1f2937" }}>Loading…</div>}
+          {visibleLines.map((line) => {
+            const i = lines.indexOf(line);
+            const isActive = i === activeIdx;
+            const isPast   = i < activeIdx;
+            const words    = isActive ? wordsForLine(line) : null;
+            return (
+              <div
+                key={i}
+                ref={isActive ? activeLyricRef : undefined}
+                style={{
+                  textAlign: "center",
+                  fontSize:   isActive ? 36 : 19,
+                  fontWeight: isActive ? 800 : 400,
+                  opacity:    isActive ? 1 : isPast ? 0.2 : 0.45,
+                  transform:  isActive ? "scale(1.02)" : "scale(1)",
+                  transition: "all 0.2s ease",
+                  maxWidth: 540,
+                  lineHeight: 1.25,
+                }}
+              >
+                {isActive && words ? (
+                  <span style={{ display: "flex", flexWrap: "wrap", justifyContent: "center", gap: "0 10px" }}>
+                    {words.map((w, wi) => {
+                      const pct = currentTime <= w.start ? 0 : currentTime >= w.end ? 100
+                        : Math.round(((currentTime - w.start) / (w.end - w.start)) * 100);
+                      return (
+                        <span key={wi} style={{ position: "relative", display: "inline-block", color: "#374151" }}>
                           {w.word}
+                          <span style={{ position: "absolute", left: 0, top: 0, color: "#facc15", overflow: "hidden", width: `${pct}%`, whiteSpace: "nowrap", textShadow: "0 0 16px #facc1580" }}>
+                            {w.word}
+                          </span>
                         </span>
-                      </span>
-                    );
-                  })}
-                </span>
-              ) : (
-                <span style={{ color: isPast ? "#1f2937" : "#4b5563" }}>{line.text}</span>
-              )}
+                      );
+                    })}
+                  </span>
+                ) : (
+                  line.text
+                )}
+              </div>
+            );
+          })}
+        </div>
+
+        {/* Right panel: graph + note stats */}
+        <div style={{ display: "flex", flexDirection: "column", gap: 0, padding: "20px 20px", background: "#060610" }}>
+
+          {/* Pitch graph */}
+          <div style={{ borderRadius: 12, overflow: "hidden", border: "1px solid #0f0f1a", position: "relative" }}>
+            <canvas ref={canvasRef} width={680} height={200} style={{ width: "100%", height: 200, display: "block" }} />
+            {!playing && (
+              <div style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", background: "#07070fee", color: "#1f2937", fontSize: 12, letterSpacing: 2, textTransform: "uppercase" }}>
+                Pitch Graph
+              </div>
+            )}
+          </div>
+
+          {/* Note stats */}
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginTop: 12 }}>
+            {[
+              { label: "You're singing", value: liveMidi ? noteFromMidi(liveMidi) : "—", sub: liveMidi ? `MIDI ${liveMidi.toFixed(1)}` : "silent", color: "#facc15" },
+              { label: "Target note", value: targetMidi ? noteFromMidi(targetMidi) : "—", sub: targetMidi ? `MIDI ${targetMidi.toFixed(1)}` : "rest", color: "#a78bfa" },
+            ].map(({ label, value, sub, color }) => (
+              <div key={label} style={{ background: "#0a0a18", border: "1px solid #0f0f1a", borderRadius: 10, padding: "12px 14px" }}>
+                <div style={{ fontSize: 10, color: "#374151", letterSpacing: 2, textTransform: "uppercase", marginBottom: 6 }}>{label}</div>
+                <div style={{ fontSize: 28, fontWeight: 800, color, fontFamily: "monospace", lineHeight: 1 }}>{value}</div>
+                <div style={{ fontSize: 11, color: "#1f2937", marginTop: 4 }}>{sub}</div>
+              </div>
+            ))}
+          </div>
+
+          {/* Accuracy bar */}
+          <div style={{ background: "#0a0a18", border: "1px solid #0f0f1a", borderRadius: 10, padding: "14px 16px", marginTop: 10 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 8 }}>
+              <span style={{ fontSize: 10, color: "#374151", letterSpacing: 2, textTransform: "uppercase" }}>Accuracy</span>
+              <span style={{ fontSize: 11, color: "#4b5563", fontFamily: "monospace" }}>{hits}/{scored} hits</span>
             </div>
-          );
-        })}
+            <div style={{ height: 6, background: "#111", borderRadius: 3, overflow: "hidden" }}>
+              <div style={{ height: "100%", width: `${score}%`, background: `linear-gradient(to right, #7c3aed, ${scoreColor})`, borderRadius: 3, transition: "width 0.3s ease" }} />
+            </div>
+            <div style={{ display: "flex", justifyContent: "space-between", marginTop: 6, fontSize: 10, color: "#1f2937" }}>
+              <span>0</span><span>50</span><span>100</span>
+            </div>
+          </div>
+
+        </div>
       </div>
     </div>
   );
 }
-
-// ─── Helpers ──────────────────────────────────────────────────────────────────
-const NOTE_NAMES = ["C","C#","D","D#","E","F","F#","G","G#","A","A#","B"];
-function noteFromMidi(midi: number) {
-  const n = Math.round(midi);
-  return NOTE_NAMES[((n % 12) + 12) % 12] + Math.floor(n / 12 - 1);
-}
-
-const s: Record<string, React.CSSProperties> = {
-  root:          { minHeight: "100vh", background: "#030308", color: "#fff", fontFamily: "system-ui, sans-serif", display: "flex", flexDirection: "column", padding: "20px 28px", gap: 14 },
-  header:        { display: "flex", justifyContent: "space-between", alignItems: "center" },
-  songTitle:     { fontSize: 24, fontWeight: 900, letterSpacing: -0.5 },
-  songArtist:    { fontSize: 13, color: "#4b5563", marginTop: 3 },
-  progressTrack: { height: 3, background: "#111", borderRadius: 2, overflow: "hidden" },
-  progressFill:  { height: "100%", background: "linear-gradient(to right, #7c3aed, #a78bfa)", transition: "width 0.1s linear" },
-  hud:           { display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10 },
-  hudCard:       { background: "#0d0d18", border: "1px solid #1a1a2e", borderRadius: 12, padding: "12px 16px", textAlign: "center" },
-  hudLabel:      { color: "#374151", fontSize: 10, textTransform: "uppercase" as const, letterSpacing: 2, marginBottom: 6 },
-  micPill:       { background: "#dc262622", color: "#f87171", border: "1px solid #f8717133", borderRadius: 20, padding: "4px 12px", fontSize: 12 },
-  btnPrimary:    { background: "linear-gradient(135deg, #7c3aed, #8b5cf6)", color: "#fff", border: "none", borderRadius: 10, padding: "10px 22px", cursor: "pointer", fontSize: 15, fontWeight: 700 },
-  btnGhost:      { background: "transparent", color: "#6b7280", border: "1px solid #1f2937", borderRadius: 10, padding: "10px 16px", cursor: "pointer", fontSize: 16 },
-  lyricsBox:     { flex: 1, overflowY: "auto", display: "flex", flexDirection: "column", alignItems: "center", gap: 22, padding: "40px 0 60px" },
-};
