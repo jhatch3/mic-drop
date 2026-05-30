@@ -1,0 +1,5 @@
+demucs
+librosa
+numpy
+soundfile
+jsonschema
