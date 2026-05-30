@@ -1,0 +1,6 @@
+demucs
+torchcodec
+librosa
+numpy
+soundfile
+jsonschema

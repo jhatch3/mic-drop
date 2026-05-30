@@ -1,0 +1,10 @@
+{
+  "song_id": "demo-sweep",
+  "title": "Dev Sine Sweep",
+  "artist": "Stream B",
+  "difficulty": 1,
+  "duration_sec": 15,
+  "segment_start_sec": 0,
+  "segment_end_sec": 15,
+  "note": "Synthetic fixture so Stream C can render the live graph before real songs are prepped. Sweeps MIDI 60 -> 72 with leading/trailing silence."
+}
