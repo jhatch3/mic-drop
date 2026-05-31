@@ -39,9 +39,11 @@ uses your browser (Chrome recommended).</p>
 <div class="row">
   <button id="start">▶ Start</button>
   <button id="listen" class="pill" disabled>🎤 Listen</button>
+  <button id="done" class="pill" style="display:none; background:#e63946; color:#fff;">⏹ Done singing</button>
   <span class="status" id="status">idle</span>
 </div>
 <p class="muted" id="hint"></p>
+<div id="result" style="display:none; background:#160a2b; border:1px solid #3a2168; border-radius:8px; padding:12px; margin:10px 0;"></div>
 
 <div class="row">
   <input type="text" id="say" placeholder="…or type to the host" />
@@ -126,7 +128,13 @@ function openWS() {
     let m; try { m = JSON.parse(ev.data); } catch { return; }
     if (m.type === "status") setStatus(m.msg);
     else if (m.type === "sfx") playSfx(m.name, m.duration);
-    else if (m.type === "game") logLine(`🎮 ${m.command}`);
+    else if (m.type === "game") {
+      logLine(`🎮 ${m.command}`);
+      if (m.command === "start_game") { match = { id: "m-" + Date.now().toString(36), takes: {}, rec: null, chunks: [], cur: null }; $("result").style.display = "none"; }
+      else if (m.command === "start_p1_turn") pendingTake = "p1";   // begins when host finishes talking
+      else if (m.command === "start_p2_turn") pendingTake = "p2";
+      else if (m.command === "end_game") { /* scoring is triggered by Done singing on P2 */ }
+    }
     else if (m.type === "caption" && m.role === "host") streamCaption("host", m.text);
     else if (m.type === "turn_complete") { finalize(); afterHostSpoke(); }
   };
@@ -170,9 +178,80 @@ function startListening() {
 }
 function stopListening() { autoListen = false; try { recog && recog.stop(); } catch {} }
 
-// After the host finishes a spoken turn, auto-open the mic so you can reply.
+// After the host finishes a spoken turn: start a pending singing take if one is armed,
+// otherwise auto-open the mic (STT) so you can reply.
 function afterHostSpoke() {
+  if (pendingTake) { const p = pendingTake; pendingTake = null; beginTake(p); return; }
   if (autoListen && ws && ws.readyState === 1) setTimeout(startListening, 250);
+}
+
+// ── Real scored match driven by the host's tool calls ───────────────────────
+const SONG_ID = "firework";
+let match = { id: null, takes: {}, rec: null, chunks: [], cur: null };
+let pendingTake = null;
+function recMime() {
+  for (const m of ["audio/webm;codecs=opus", "audio/webm", "audio/mp4"])
+    if (window.MediaRecorder && MediaRecorder.isTypeSupported(m)) return m;
+  return "";
+}
+async function beginTake(player) {
+  stopListening();                                  // don't run STT while singing
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    match.cur = player; match.chunks = [];
+    match.rec = new MediaRecorder(stream, { mimeType: recMime() });
+    match.rec.ondataavailable = (e) => { if (e.data.size) match.chunks.push(e.data); };
+    match.rec.onstop = () => stream.getTracks().forEach((t) => t.stop());
+    match.rec.start(200);
+    $("done").style.display = ""; setStatus(`🔴 ${player.toUpperCase()} — sing now! Click "Done singing" when finished.`);
+    logLine(`🔴 recording ${player}`);
+  } catch (e) {
+    setStatus(`mic error (${e.name})`); if (e.name === "NotAllowedError") $("help").style.display = "block";
+  }
+}
+function endTake() {
+  return new Promise((resolve) => {
+    const rec = match.rec, p = match.cur;
+    if (!rec || rec.state === "inactive") return resolve(null);
+    rec.onstop = () => {
+      match.takes[p] = new Blob(match.chunks, { type: rec.mimeType || "audio/webm" });
+      match.rec = null; logLine(`saved ${p} take (${Math.round(match.takes[p].size / 1024)} KB)`);
+      resolve(p);
+    };
+    rec.stop();
+  });
+}
+$("done").onclick = async () => {
+  $("done").style.display = "none";
+  const p = await endTake();
+  if (p === "p1") { sendText("Player one is finished singing — bring up Player two and start their turn!"); }
+  else if (p === "p2") { await scoreMatch(); }
+};
+async function scoreMatch() {
+  if (!match.takes.p1 || !match.takes.p2) { logLine("missing a take"); return; }
+  setStatus("⏳ scoring both takes (pitch + lyrics)…");
+  const fd = new FormData();
+  fd.append("match_id", match.id || ("m-" + Date.now().toString(36)));
+  fd.append("song_id", SONG_ID);
+  fd.append("p1_pubkey", "VoiceP1"); fd.append("p2_pubkey", "VoiceP2");
+  fd.append("take_p1", match.takes.p1, "p1.webm");
+  fd.append("take_p2", match.takes.p2, "p2.webm");
+  try {
+    const r = await fetch("/api/match/finish", { method: "POST", body: fd });
+    if (!r.ok) throw new Error("HTTP " + r.status);
+    const res = await r.json();
+    const [a, b] = res.scores;
+    $("result").style.display = "";
+    $("result").innerHTML =
+      `<b>🏁 ${res.winner.toUpperCase()} WINS</b><br>` +
+      [a, b].map((s) => `${s.player_id}: <b>${s.score}</b>/100 ` +
+        `(🎵 pitch ${s.pitch_score ?? "—"} · 📝 lyrics ${s.lyrics_score ?? "—"})` +
+        (s.transcript ? `<br><span class="muted">heard: “${s.transcript}”</span>` : "")).join("<br>");
+    logLine(`🏁 P1 ${a.score} / P2 ${b.score} · winner ${res.winner}`);
+    sendText(`The judges' scores are in: Player 1 scored ${a.score} out of 100, Player 2 scored ${b.score}. ` +
+      `The winner is ${res.winner}. Announce the winner with big energy, play the applause sound, then roast the loser.`);
+    setStatus("scored — host is announcing the result");
+  } catch (e) { logLine("scoring failed: " + e.message); setStatus("scoring failed — see log"); }
 }
 
 // ── Controls ─────────────────────────────────────────────────────────────────
