@@ -9,54 +9,51 @@
   body { font-family: system-ui, sans-serif; max-width: 640px; margin: 36px auto; padding: 0 16px;
          background: #0b0617; color: #f7f0ff; }
   h1 { font-size: 1.3rem; }
-  button { font-size: 1rem; padding: 11px 20px; border-radius: 10px; border: 0; cursor: pointer;
-           font-weight: 600; }
-  #talk { background: linear-gradient(100deg,#ff2e97,#b537f2); color: #fff; }
-  #talk.live { background: #e63946; }
-  #talk:disabled { opacity: .5; cursor: default; }
+  button { font-size: 1rem; padding: 11px 20px; border-radius: 10px; border: 0; cursor: pointer; font-weight: 600; }
+  #start { background: linear-gradient(100deg,#ff2e97,#b537f2); color: #fff; }
+  #listen { background: #05d9e8; color: #06121a; }
+  #listen.on { background: #e63946; color: #fff; }
+  button:disabled { opacity: .45; cursor: default; }
   .row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin: 14px 0; }
   input[type=text] { flex: 1; min-width: 200px; background: #160a2b; color: #f7f0ff; border: 1px solid #3a2168;
                      border-radius: 8px; padding: 9px 12px; font-size: 1rem; }
-  .pill { background: #160a2b; border: 1px solid #3a2168; border-radius: 8px; padding: 8px 12px; }
-  .status { color: #05d9e8; min-height: 1.2em; margin: 8px 0; }
-  .cap { margin: 6px 0; }
+  .pill { background: #160a2b; border: 1px solid #3a2168; color: #f7f0ff; }
+  .status { color: #05d9e8; min-height: 1.3em; margin: 8px 0; font-weight: 600; }
+  .cap { margin: 7px 0; line-height: 1.4; }
   .cap .host { color: #ff6ec7; } .cap .user { color: #aaff00; }
-  #log { background: #120724; border: 1px solid #3a2168; border-radius: 8px; padding: 12px;
-         max-height: 240px; overflow-y: auto; font-size: .85rem; }
-  .muted { color: #b9a7e6; font-size: .82rem; }
-  code { color: #05d9e8; }
+  .cap .txt.interim { opacity: .6; font-style: italic; }
+  #caps { min-height: 60px; }
+  #log { background: #120724; border: 1px solid #3a2168; border-radius: 8px; padding: 10px;
+         max-height: 160px; overflow-y: auto; font-size: .8rem; margin-top: 14px; }
+  .muted { color: #b9a7e6; font-size: .85rem; }
+  code { color: #05d9e8; user-select: all; }
+  #help { display:none; background:#3a0d22; border:1px solid #ff2e97; border-radius:8px; padding:12px; margin:12px 0; }
 </style>
 </head>
 <body>
 <h1>🎤 MIC DROP — talk to the host</h1>
-<p class="muted">Click <b>Start talking</b>, allow the mic, and just talk to the host. He hears you,
-replies in voice (~2s), and fires sound effects / runs the show via tools. <b>Use headphones</b>
-so he doesn't hear himself. Connects to <code>/ws/host</code> (Gemini Live + ElevenLabs SFX).</p>
+<p class="muted">Click <b>Start</b> to hear the host. When he finishes talking it <b>auto-listens</b> —
+just speak and your words appear on screen, then he replies. <b>Use headphones.</b> Speech-to-text
+uses your browser (Chrome recommended).</p>
 
 <div class="row">
-  <button id="talk">▶ Start show</button>
-  <button id="mic" class="pill" disabled>🎤 Talk to host</button>
-  <button id="ready" class="pill" disabled>✅ Ready — start!</button>
-  <button id="checkmic" class="pill">🎚 Check mic</button>
+  <button id="start">▶ Start</button>
+  <button id="listen" class="pill" disabled>🎤 Listen</button>
   <span class="status" id="status">idle</span>
 </div>
-<p class="muted" id="micstate">🎙 mic: off</p>
-<p class="muted">Click <b>Talk to host</b>, speak, then click <b>Stop &amp; send</b> — your words appear below
-and the host replies. Watch the level meter to confirm your mic is picking you up.</p>
+<p class="muted" id="hint"></p>
 
 <div class="row">
-  <input type="text" id="say" placeholder="…or type to the host (no mic needed)" />
+  <input type="text" id="say" placeholder="…or type to the host" />
   <button id="send" class="pill">Send</button>
 </div>
 
-<div id="help" style="display:none; background:#3a0d22; border:1px solid #ff2e97; border-radius:8px; padding:12px; margin:12px 0;">
-  <b>🎙 Microphone is blocked for this site.</b> Your OS allowing it isn't enough — Chrome saved a per-site block. Fix it:
+<div id="help">
+  <b>🎙 Microphone blocked.</b> Allow it for this site:
   <ol style="margin:8px 0 0 18px; line-height:1.6;">
-    <li>Open this in a new tab (copy it):<br><code style="user-select:all">chrome://settings/content/siteDetails?site=http%3A%2F%2Flocalhost%3A8000</code></li>
-    <li>Set <b>Microphone → Allow</b> (or click <b>Reset permissions</b>).</li>
-    <li>Come back here and <b>reload</b>, then click <b>Start talking</b> and choose <b>Allow</b>.</li>
+    <li>Open a new tab: <code>chrome://settings/content/siteDetails?site=http%3A%2F%2Flocalhost%3A8000</code></li>
+    <li>Set <b>Microphone → Allow</b> (or <b>Reset permissions</b>), then reload this page.</li>
   </ol>
-  <span class="muted">Shortcut: click the sliders/🔒 icon left of the address bar → Microphone → Allow.</span>
 </div>
 
 <div id="caps"></div>
@@ -66,294 +63,132 @@ and the host replies. Watch the level meter to confirm your mic is picking you u
 const $ = (id) => document.getElementById(id);
 const setStatus = (t) => ($("status").textContent = t);
 const logLine = (t) => { const d = document.createElement("div"); d.textContent = t; $("log").prepend(d); };
-// Streaming captions: transcription arrives in chunks — accumulate each speaker's
-// current turn into one growing line, then start a fresh line on turn_complete.
+
+// ── Captions (streaming) ─────────────────────────────────────────────────────
 let liveCap = { host: null, user: null };
-function streamCaption(role, chunk) {
-  if (!liveCap[role]) {
-    const d = document.createElement("div"); d.className = "cap";
-    d.innerHTML = `<span class="${role}">${role === "host" ? "🎙 Host" : "🧑 You"}:</span> <span class="txt"></span>`;
-    $("caps").prepend(d);
-    liveCap[role] = d.querySelector(".txt");
-  }
-  liveCap[role].textContent += chunk;
+function capLine(role) {
+  const d = document.createElement("div"); d.className = "cap";
+  d.innerHTML = `<span class="${role}">${role === "host" ? "🎙 Host" : "🧑 You"}:</span> <span class="txt"></span>`;
+  $("caps").prepend(d);
+  return d.querySelector(".txt");
 }
-function finalizeCaptions() { liveCap = { host: null, user: null }; }
+function streamCaption(role, text) {
+  if (!liveCap[role]) liveCap[role] = capLine(role);
+  liveCap[role].classList.remove("interim");
+  liveCap[role].textContent += text;
+}
+function liveUser(text, interim) {           // live STT: replace (not append) the current line
+  if (!liveCap.user) liveCap.user = capLine("user");
+  liveCap.user.textContent = text;
+  liveCap.user.classList.toggle("interim", !!interim);
+}
+function finalize() { liveCap = { host: null, user: null }; }
 
-let ws, micCtx, playCtx, nextTime = 0, talking = false, micStream, proc;
-
-// One shared playback timeline for BOTH host voice (PCM) and sound effects, so
-// they never overlap — whatever is queued first plays first; the next waits.
-function ensurePlay() {
+// ── Audio out: host voice (PCM24) + SFX share one timeline ───────────────────
+let playCtx, nextTime = 0;
+function ensureCtx() {
   if (!playCtx) playCtx = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 24000 });
   if (playCtx.state === "suspended") playCtx.resume();
   return playCtx;
 }
-
-function playPCM24(arrayBuf) {
-  const ctx = ensurePlay();
-  const i16 = new Int16Array(arrayBuf);
-  const f32 = new Float32Array(i16.length);
+function playPCM(buf) {
+  const ctx = ensureCtx();
+  const i16 = new Int16Array(buf), f32 = new Float32Array(i16.length);
   for (let i = 0; i < i16.length; i++) f32[i] = i16[i] / 32768;
-  const buf = ctx.createBuffer(1, f32.length, 24000);
-  buf.copyToChannel(f32, 0);
-  const src = ctx.createBufferSource();
-  src.buffer = buf; src.connect(ctx.destination);
-  const t = Math.max(ctx.currentTime + 0.02, nextTime);
-  src.start(t); nextTime = t + buf.duration;
+  const ab = ctx.createBuffer(1, f32.length, 24000); ab.copyToChannel(f32, 0);
+  const src = ctx.createBufferSource(); src.buffer = ab; src.connect(ctx.destination);
+  const t = Math.max(ctx.currentTime + 0.02, nextTime); src.start(t); nextTime = t + ab.duration;
 }
-
-// Reserve the SFX's slot on the shared timeline immediately (using its known
-// duration), then fetch+decode and play it at that exact slot. Voice queued
-// after this will start only once the SFX finishes.
-const SFX_TAIL = 0.45;   // let the next audio come in this early on the SFX's quiet tail
-const SFX_GAIN = 0.45;   // sound effects sit a bit under the host's voice
-async function scheduleSfx(name, duration) {
-  const ctx = ensurePlay();
+async function playSfx(name, duration = 2) {
+  const ctx = ensureCtx();
   const start = Math.max(ctx.currentTime + 0.02, nextTime);
-  const slot = (d) => start + Math.max(0.25, d - SFX_TAIL);   // tighten: skip the silent tail
-  nextTime = slot(duration || 2);              // reserve now (tightened), before decode
-  logLine(`🔊 SFX: ${name}`);
+  nextTime = start + Math.max(0.25, duration - 0.45);
+  logLine(`🔊 ${name}`);
   try {
-    const ab = await (await fetch(`/sfx-audio/${name}.mp3`)).arrayBuffer();
-    const buf = await ctx.decodeAudioData(ab);
-    const src = ctx.createBufferSource();
-    const gain = ctx.createGain(); gain.gain.value = SFX_GAIN;
-    src.buffer = buf; src.connect(gain); gain.connect(ctx.destination);
-    src.start(start);
-    nextTime = slot(buf.duration);             // correct to real (trimmed) length
-  } catch (e) { logLine(`sfx load failed: ${name}`); }
+    const dec = await ctx.decodeAudioData(await (await fetch(`/sfx-audio/${name}.mp3`)).arrayBuffer());
+    const src = ctx.createBufferSource(); const g = ctx.createGain(); g.gain.value = 0.45;
+    src.buffer = dec; src.connect(g); g.connect(ctx.destination); src.start(start);
+    nextTime = Math.max(nextTime, start + Math.max(0.25, dec.duration - 0.45));
+  } catch {}
 }
 
+// ── WebSocket to the host ────────────────────────────────────────────────────
+let ws;
 function openWS() {
   const proto = location.protocol === "https:" ? "wss" : "ws";
   ws = new WebSocket(`${proto}://${location.host}/ws/host`);
   ws.binaryType = "arraybuffer";
-  ws.onopen = () => { setStatus("connecting host…"); $("ready").disabled = false; $("mic").disabled = false; };
-  ws.onclose = () => { setStatus("disconnected"); $("ready").disabled = true; $("mic").disabled = true; stopMic(); };
-  ws.onerror = () => setStatus("ws error");
+  ws.onopen = () => { ws.send(JSON.stringify({ type: "mode", autostart: false })); $("listen").disabled = false; setStatus("connecting…"); };
+  ws.onclose = () => { setStatus("disconnected"); stopListening(); $("listen").disabled = true; };
+  ws.onerror = () => setStatus("connection error");
   ws.onmessage = (ev) => {
-    if (ev.data instanceof ArrayBuffer) { playPCM24(ev.data); return; }
+    if (ev.data instanceof ArrayBuffer) { playPCM(ev.data); return; }
     let m; try { m = JSON.parse(ev.data); } catch { return; }
     if (m.type === "status") setStatus(m.msg);
-    else if (m.type === "sfx") { scheduleSfx(m.name, m.duration); }
-    else if (m.type === "game") {
-      logLine(`🎮 game command: ${m.command}`);
-      handleGameCommand(m.command).catch((e) => logLine("game cmd failed: " + (e.name || e)));
-    }
-    else if (m.type === "caption") streamCaption(m.role, m.text);
-    else if (m.type === "debug") {
-      const lvl = m.peak < 200 ? `⚠️ SILENT (peak ${m.peak}) — wrong/dead mic` : `🎙 signal OK (peak ${m.peak})`;
-      setStatus(`backend got ${m.rx_chunks} chunks · ${lvl}`);
-    }
-    else if (m.type === "turn_complete") { finalizeCaptions(); maybeStartPendingTake().catch((e) => logLine("take start failed: " + e)); }
+    else if (m.type === "sfx") playSfx(m.name, m.duration);
+    else if (m.type === "game") logLine(`🎮 ${m.command}`);
+    else if (m.type === "caption" && m.role === "host") streamCaption("host", m.text);
+    else if (m.type === "turn_complete") { finalize(); afterHostSpoke(); }
   };
 }
+function sendText(text) {
+  if (ws && ws.readyState === 1) ws.send(JSON.stringify({ type: "text", text }));
+}
 
-// Gemini Live needs 16k PCM16. Browsers often ignore a 16k AudioContext request and
-// run at 44.1/48k, so we capture at the real rate and downsample to 16k ourselves.
-function downsampleTo16k(f32, inRate) {
-  if (inRate === 16000) return f32;
-  const ratio = inRate / 16000;
-  const outLen = Math.floor(f32.length / ratio);
-  const out = new Float32Array(outLen);
-  for (let i = 0; i < outLen; i++) {
-    const start = Math.floor(i * ratio), end = Math.min(Math.floor((i + 1) * ratio), f32.length);
-    let sum = 0, n = 0;
-    for (let j = start; j < end; j++) { sum += f32[j]; n++; }
-    out[i] = n ? sum / n : 0;                 // average = cheap anti-alias
-  }
-  return out;
-}
-let sentChunks = 0, micOn = false;   // (talking is declared up top)
-const setMicState = (on) => {
-  micOn = on;
-  $("micstate").textContent = on ? "🎙 mic: ON" : "🎙 mic: off";
-  if (!on) $("mic").textContent = "🎤 Talk to host";
-};
-// Click-to-talk: click to start speaking, click again to send → host replies.
-async function talkToHost() {
-  if (!micOn) {
-    try { await startMic(); }
-    catch (e) {
-      setStatus(`mic error (${e.name})`);
-      logLine(`mic error: ${e.name} — ${e.message}`);
-      if (e.name === "NotAllowedError" || e.name === "SecurityError") $("help").style.display = "block";
-      return;
+// ── Browser speech-to-text (the user's voice → live text) ────────────────────
+const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+let recog = null, listening = false, autoListen = true;
+
+function startListening() {
+  if (!SR) { setStatus("No speech recognition — use Chrome, or type below."); return; }
+  if (listening) return;
+  recog = new SR();
+  recog.lang = "en-US"; recog.interimResults = true; recog.continuous = false;
+  recog.onstart = () => { listening = true; $("listen").classList.add("on"); $("listen").textContent = "■ Listening…"; setStatus("🎙 listening — speak now"); };
+  recog.onresult = (e) => {
+    let interim = "", final = "";
+    for (let i = e.resultIndex; i < e.results.length; i++) {
+      const t = e.results[i][0].transcript;
+      if (e.results[i].isFinal) final += t; else interim += t;
     }
-  }
-  if (!talking) {
-    talking = true;
-    ws.send(JSON.stringify({ type: "activity_start" }));
-    $("mic").textContent = "⏹ Stop & send";
-    setStatus("🎙 talking — speak, then click Stop & send");
-  } else {
-    talking = false;
-    ws.send(JSON.stringify({ type: "activity_end" }));
-    $("mic").textContent = "🎤 Talk to host";
-    setStatus("sent — host is responding");
-  }
-}
-async function startMic() {
-  if (micOn) return;
-  micStream = await navigator.mediaDevices.getUserMedia({
-    audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true, channelCount: 1 },
-  });
-  micCtx = new (window.AudioContext || window.webkitAudioContext)();
-  if (micCtx.state === "suspended") await micCtx.resume();
-  setMicState(true);
-  const inRate = micCtx.sampleRate;
-  logLine(`mic context rate: ${inRate}Hz → downsampling to 16000Hz`);
-  const src = micCtx.createMediaStreamSource(micStream);
-  proc = micCtx.createScriptProcessor(4096, 1, 1);
-  const mute = micCtx.createGain(); mute.gain.value = 0;  // avoid local echo
-  sentChunks = 0; talking = false;
-  proc.onaudioprocess = (e) => {
-    if (!ws || ws.readyState !== 1) return;
-    if (match.singing) return;        // scored take: record only, don't feed the bot
-    const ch = e.inputBuffer.getChannelData(0);
-    let peak = 0; for (let i = 0; i < ch.length; i++) { const a = Math.abs(ch[i]); if (a > peak) peak = a; }
-    if (!talking) return;             // click-to-talk: only stream while "talking"
-    const ds = downsampleTo16k(ch, inRate);
-    const i16 = new Int16Array(ds.length);
-    for (let i = 0; i < ds.length; i++) { const s = Math.max(-1, Math.min(1, ds[i])); i16[i] = s < 0 ? s * 32768 : s * 32767; }
-    ws.send(i16.buffer);
-    if ((++sentChunks % 6) === 0) {   // live level so you can SEE it's capturing
-      const bars = "█".repeat(Math.min(20, Math.round(peak * 60)));
-      setStatus(`🎙 talking… level ${bars || "(silent — speak up / check input device)"}`);
+    if (interim) liveUser(interim, true);
+    if (final) {
+      liveUser(final, false); finalize();
+      logLine(`🧑 ${final}`);
+      sendText(final);            // → host replies in voice
+      stopListening();            // don't transcribe the host's own reply
+      setStatus("…host is responding");
     }
   };
-  src.connect(proc); proc.connect(mute); mute.connect(micCtx.destination);
+  recog.onerror = (e) => {
+    logLine("stt error: " + e.error);
+    if (e.error === "not-allowed" || e.error === "service-not-allowed") { $("help").style.display = "block"; setStatus("mic blocked — see the box below"); }
+    else setStatus("stt: " + e.error);
+  };
+  recog.onend = () => { listening = false; $("listen").classList.remove("on"); $("listen").textContent = "🎤 Listen"; };
+  try { recog.start(); } catch (e) { logLine("stt start: " + e.message); }
+}
+function stopListening() { autoListen = false; try { recog && recog.stop(); } catch {} }
+
+// After the host finishes a spoken turn, auto-open the mic so you can reply.
+function afterHostSpoke() {
+  if (autoListen && ws && ws.readyState === 1) setTimeout(startListening, 250);
 }
 
-function stopMic() {
-  if (talking && ws && ws.readyState === 1) { ws.send(JSON.stringify({ type: "activity_end" })); talking = false; }
-  try { proc && (proc.onaudioprocess = null); micCtx && micCtx.close(); } catch {}
-  try { micStream && micStream.getTracks().forEach((t) => t.stop()); } catch {}
-  setMicState(false);
-}
-
-// ── Real scored match, driven by the host's tool calls ───────────────────────
-const SONG_ID = "firework";
-let match = { id: null, takes: {}, rec: null, chunks: [], singing: null };
-function recMime() {
-  for (const m of ["audio/webm;codecs=opus", "audio/webm", "audio/mp4"])
-    if (window.MediaRecorder && MediaRecorder.isTypeSupported(m)) return m;
-  return "";
-}
-async function beginTake(player) {
-  if (!micOn) { await startMic(); }                 // mic must be live to record
-  match.singing = player;                            // pause sending mic to the bot while singing
-  match.chunks = [];
-  match.rec = new MediaRecorder(micStream, { mimeType: recMime() });
-  match.rec.ondataavailable = (e) => { if (e.data.size) match.chunks.push(e.data); };
-  match.rec.start(200);
-  logLine(`🔴 recording ${player.toUpperCase()} — sing!`);
-  setStatus(`🔴 ${player.toUpperCase()} singing — recorded for scoring`);
-}
-function endTake() {
-  return new Promise((resolve) => {
-    const rec = match.rec, player = match.singing;
-    if (!rec || rec.state === "inactive") { match.singing = null; return resolve(); }
-    rec.onstop = () => {
-      match.takes[player] = new Blob(match.chunks, { type: rec.mimeType || "audio/webm" });
-      match.rec = null; match.singing = null;
-      logLine(`saved ${player} take (${Math.round(match.takes[player].size / 1024)} KB)`);
-      resolve();
-    };
-    rec.stop();
-  });
-}
-// Recording must begin only AFTER the host finishes announcing the turn (otherwise it
-// captures his own voice and starts before the player is cued). So turn commands just
-// arm a pending take; it actually starts on the next turn_complete.
-let pendingTake = null;
-async function handleGameCommand(cmd) {
-  if (cmd === "start_game") {                 // match begins — mic on, fresh takes
-    match = { id: "m-" + Date.now().toString(36), takes: {}, rec: null, chunks: [], singing: null };
-    if (!micOn) await startMic();
-  } else if (cmd === "start_p1_turn") {
-    if (!micOn) await startMic();
-    pendingTake = "p1";                       // arm; begins when the host stops talking
-  } else if (cmd === "start_p2_turn") {
-    await endTake();                          // save P1
-    pendingTake = "p2";
-  } else if (cmd === "end_game") {
-    pendingTake = null;
-    await endTake();                          // save the last take
-    await scoreMatch();                       // real /api/match/finish → feed result to bot
-  }
-}
-async function maybeStartPendingTake() {
-  if (!pendingTake) return;
-  const p = pendingTake; pendingTake = null;
-  await beginTake(p);
-}
-async function scoreMatch() {
-  if (!match.takes.p1 || !match.takes.p2) { logLine("missing a take — can't score"); return; }
-  setStatus("scoring both takes on the backend…");
-  const fd = new FormData();
-  fd.append("match_id", match.id || ("m-" + Date.now().toString(36)));
-  fd.append("song_id", SONG_ID);
-  fd.append("p1_pubkey", "VoiceP1"); fd.append("p2_pubkey", "VoiceP2");
-  fd.append("take_p1", match.takes.p1, "p1.webm");
-  fd.append("take_p2", match.takes.p2, "p2.webm");
-  try {
-    const r = await fetch("/api/match/finish", { method: "POST", body: fd });
-    if (!r.ok) throw new Error(`HTTP ${r.status}: ${await r.text()}`);
-    const res = await r.json();
-    const s1 = res.scores?.[0]?.score ?? 0, s2 = res.scores?.[1]?.score ?? 0;
-    logLine(`🏁 SCORES — P1 ${s1} / P2 ${s2} · winner ${res.winner}`);
-    // Hand the real result back to the bot so he announces + roasts.
-    ws.send(JSON.stringify({ type: "text", text:
-      `The scores are in from the judges: Player 1 scored ${s1} out of 100, Player 2 scored ${s2}. ` +
-      `The winner is ${res.winner}. Announce the winner with big energy, play the applause sound, ` +
-      `then give the loser a short playful roast.` }));
-  } catch (e) { logLine("scoring failed: " + e.message); setStatus("scoring failed — see log"); }
-}
-
-// "Start show" = connect + hear the intro, mic OFF. Click again to end.
-$("talk").onclick = () => {
-  if (ws && ws.readyState <= 1) { ws.close(); $("talk").textContent = "▶ Start show"; $("talk").classList.remove("live"); return; }
-  openWS();
-  $("talk").textContent = "■ End show"; $("talk").classList.add("live");
-  setStatus("show starting — mic off during the intro");
+// ── Controls ─────────────────────────────────────────────────────────────────
+$("start").onclick = () => {
+  if (ws && ws.readyState <= 1) { ws.close(); $("start").textContent = "▶ Start"; return; }
+  ensureCtx(); openWS(); autoListen = true;
+  $("start").textContent = "■ Stop";
+  $("hint").textContent = "Host is greeting you — he'll auto-listen when he's done.";
 };
-
-// "Ready" = tell the host we're ready; he starts the game, which turns the mic on.
-$("ready").onclick = () => {
-  if (!ws || ws.readyState !== 1) { setStatus("start the show first"); return; }
-  ws.send(JSON.stringify({ type: "text", text: "Yes, we're ready to start! Let's go!" }));
-  streamCaption("user", "Yes, we're ready to start!"); finalizeCaptions();
-  setStatus("ready sent — host is starting the game");
+$("listen").onclick = () => {
+  if (listening) { autoListen = false; try { recog.stop(); } catch {} }
+  else { autoListen = true; startListening(); }
 };
-
-$("mic").onclick = () => talkToHost();
-
-async function checkMic() {
-  const lines = [];
-  lines.push(`secure context: ${window.isSecureContext} (origin ${location.origin})`);
-  lines.push(`getUserMedia available: ${!!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia)}`);
-  try {
-    const p = await navigator.permissions.query({ name: "microphone" });
-    lines.push(`mic permission: ${p.state}`);
-    $("help").style.display = p.state === "denied" ? "block" : "none";
-  } catch { lines.push("mic permission: (Permissions API unavailable — Safari/Firefox)"); }
-  try {
-    const devs = await navigator.mediaDevices.enumerateDevices();
-    const mics = devs.filter((d) => d.kind === "audioinput");
-    lines.push(`audio inputs: ${mics.length} ${mics.length ? "(" + mics.map(m => m.label || "unlabeled").join(", ") + ")" : ""}`);
-  } catch { lines.push("could not enumerate devices"); }
-  lines.forEach(logLine);
-  setStatus("mic check done — see log below");
-}
-$("checkmic").onclick = () => checkMic().catch((e) => logLine("check failed: " + e));
-
 $("send").onclick = () => {
-  const t = $("say").value.trim(); if (!t) return;
-  if (!ws || ws.readyState > 1) { openWS(); setTimeout(() => ws.send(JSON.stringify({ type: "text", text: t })), 400); }
-  else ws.send(JSON.stringify({ type: "text", text: t }));
-  streamCaption("user", t); finalizeCaptions(); $("say").value = "";
+  const t = $("say").value.trim(); if (!t || !ws || ws.readyState !== 1) return;
+  liveUser(t, false); finalize(); logLine(`🧑 ${t}`); sendText(t); $("say").value = "";
 };
 $("say").addEventListener("keydown", (e) => { if (e.key === "Enter") $("send").click(); });
 </script>
