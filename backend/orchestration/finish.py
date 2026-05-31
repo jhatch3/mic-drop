@@ -32,7 +32,7 @@ from ai.mc_voice import tts
 from data.matches_store import get_leaderboard, insert_match
 from data.songs_store import get_contour
 from scoring.scorer import score_take
-from transcription.lyrics import lyrics_score
+from transcription.lyrics import timed_lyrics_score
 from transcription.stt import transcribe_bytes
 
 log = logging.getLogger(__name__)
@@ -43,40 +43,42 @@ MC_DIR.mkdir(parents=True, exist_ok=True)
 FALLBACK_MC = MC_DIR / "fallback.mp3"
 SONGS_DIR = _BACKEND.parent / "assets" / "songs"
 
-# Final score = (1-w)*pitch + w*lyrics. Pitch stays dominant; lyrics is a real but
+# Final score = w*lyrics + (1-w)*pitch. Lyrics-with-timing dominates; pitch is the
 # minority factor. Tune via LYRICS_WEIGHT (0 = pitch only, 1 = lyrics only).
-LYRICS_WEIGHT = float(os.getenv("LYRICS_WEIGHT", "0.3"))
+LYRICS_WEIGHT = float(os.getenv("LYRICS_WEIGHT", "0.8"))
 
 
 def _escrow_mode() -> str:
     return os.getenv("ESCROW_MODE", "mock").lower()
 
 
-def _reference_lyrics(song_id: str) -> str:
-    """Join the song's reference lyric lines into one string for fuzzy matching."""
+def _reference_lines(song_id: str) -> list[dict]:
+    """The song's timed reference lyric lines [{t, end, text}]."""
     try:
-        data = json.loads((SONGS_DIR / song_id / "lyrics.json").read_text())
-        return " ".join(ln.get("text", "") for ln in data.get("lines", []))
+        return json.loads((SONGS_DIR / song_id / "lyrics.json").read_text()).get("lines", [])
     except Exception:
-        return ""
+        return []
 
 
-def _grade_take(audio_bytes: bytes, contour: dict, reference: str, player: str) -> dict:
-    """Pitch score (authoritative) blended with a lyrics score from STT.
+def _grade_take(audio_bytes: bytes, contour: dict, lines: list[dict], player: str) -> dict:
+    """Score = 80% timing-aware lyrics + 20% pitch.
 
-    Blends only when we actually got a transcript + have reference lyrics; otherwise
-    falls back to pitch alone so missing/failed STT never tanks the score.
+    Lyrics: STT transcript fuzzy-matched to the reference words AND aligned to their
+    expected times (right words, right moment). Falls back to pitch-only if STT fails.
     """
     s = score_take(audio_bytes, contour, player)
     pitch = int(s["score"])
-    lyrics, transcript = 0.0, ""
+    lyrics, transcript, scored_lyrics = 0.0, "", False
     try:
-        transcript = (transcribe_bytes(audio_bytes) or {}).get("transcript", "")
-        if reference and transcript:
-            lyrics = lyrics_score(transcript, reference)
+        stt = transcribe_bytes(audio_bytes) or {}
+        transcript = stt.get("transcript", "")
+        words = stt.get("words", [])
+        if lines and transcript:
+            lyrics = timed_lyrics_score(words, lines)   # timing-aware
+            scored_lyrics = True
     except Exception:  # noqa: BLE001 — STT is best-effort; never block scoring
         log.exception("STT/lyrics failed for %s", player)
-    blended = round((1 - LYRICS_WEIGHT) * pitch + LYRICS_WEIGHT * lyrics) if (reference and transcript) else pitch
+    blended = round(LYRICS_WEIGHT * lyrics + (1 - LYRICS_WEIGHT) * pitch) if scored_lyrics else pitch
     s["pitch_score"] = pitch
     s["lyrics_score"] = lyrics
     s["transcript"] = transcript
@@ -85,11 +87,11 @@ def _grade_take(audio_bytes: bytes, contour: dict, reference: str, player: str) 
 
 
 async def _score_pair(
-    p1_bytes: bytes, p2_bytes: bytes, contour: dict, reference: str
+    p1_bytes: bytes, p2_bytes: bytes, contour: dict, lines: list[dict]
 ) -> tuple[dict, dict]:
     return await asyncio.gather(
-        asyncio.to_thread(_grade_take, p1_bytes, contour, reference, "p1"),
-        asyncio.to_thread(_grade_take, p2_bytes, contour, reference, "p2"),
+        asyncio.to_thread(_grade_take, p1_bytes, contour, lines, "p1"),
+        asyncio.to_thread(_grade_take, p2_bytes, contour, lines, "p2"),
     )
 
 
@@ -222,18 +224,14 @@ async def handle_finish(
     p2_score: int | None = None,
 ) -> dict[str, Any]:
     if gamemode == "dance" and p1_score is not None and p2_score is not None:
+        # Dance mode: scores come from the pose tracker on the client.
         s1: dict = {"song_id": song_id, "player_id": "p1", "score": p1_score, "frames_scored": 0, "frames_hit": p1_score}
         s2: dict = {"song_id": song_id, "player_id": "p2", "score": p2_score, "frames_scored": 0, "frames_hit": p2_score}
     else:
+        # Karaoke: 80% timing-aware lyrics + 20% pitch, scored on the backend.
         contour = get_contour(song_id)
-        s1, s2 = await _score_pair(p1_bytes, p2_bytes, contour)  # type: ignore[arg-type]
-
-    # 1. Contour + reference lyrics for the song.
-    contour = get_contour(song_id)
-    reference = _reference_lyrics(song_id)
-
-    # 2. Score in parallel — pitch (authoritative) blended with STT lyrics score.
-    s1, s2 = await _score_pair(p1_bytes, p2_bytes, contour, reference)
+        lines = _reference_lines(song_id)
+        s1, s2 = await _score_pair(p1_bytes or b"", p2_bytes or b"", contour, lines)
 
     # 3. Winner.
     winner = _pick_winner(s1, s2)
