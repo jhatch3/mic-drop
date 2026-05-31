@@ -8,12 +8,27 @@ import { getSocket } from "./socket";
 import type { RoomState } from "./types";
 import IDL from "../idl/pitch_battle.json";
 
-// ─── Static config (overridable by /api/oracle/pubkey on mount) ─────────────
-const DEFAULT_PROGRAM_ID = "2eMwChdNVoxeoWjdaiTuBGasDiHCKN3jbw7dL5eSyuZf";
-const DEFAULT_TREASURY   = "2KnfMtidoDSVYxJDBNEK1e77rVQijvJ71zkBgz6kwejm";
-const FEE_BPS            = 100;  // 1%
+// ─── Static config ────────────────────────────────────────────────────────────
+const DEFAULT_PROGRAM_ID  = "2eMwChdNVoxeoWjdaiTuBGasDiHCKN3jbw7dL5eSyuZf";
+const DEFAULT_TREASURY    = "2KnfMtidoDSVYxJDBNEK1e77rVQijvJ71zkBgz6kwejm";
+const DEFAULT_ORACLE      = "LopSRaD97SqvgpjvQ9aA1BdWpp6mKWhH3zWid4xNLEk";
+const FEE_BPS             = 100;  // 1%
 
-const API_BASE = import.meta.env.VITE_API_BASE ?? "";  // "" → use Vite proxy
+const API_BASE = import.meta.env.VITE_API_BASE ?? "";
+
+// Fallback oracle info used when backend is unreachable
+const FALLBACK_ORACLE: OracleInfo = {
+  oracle_pubkey:   DEFAULT_ORACLE,
+  program_id:      DEFAULT_PROGRAM_ID,
+  treasury_pubkey: DEFAULT_TREASURY,
+  escrow_mode:     "devnet",
+  rpc_url:         "https://api.devnet.solana.com",
+};
+
+// Fallback song list used when backend is unreachable
+const FALLBACK_SONGS: Song[] = [
+  { song_id: "firework", title: "Firework", artist: "Katy Perry", difficulty: 3, duration_sec: 50 },
+];
 
 
 // ─── Types ───────────────────────────────────────────────────────────────────
@@ -123,10 +138,17 @@ export default function Host() {
     (async () => {
       try {
         const r = await fetch(`${API_BASE}/api/oracle/pubkey`);
-        if (r.ok) setOracle(await r.json());
-        else addLog(`oracle: backend returned ${r.status} (running mock?)`);
-      } catch (e: any) {
-        addLog(`oracle: ${e.message} (backend down?)`);
+        if (r.ok) {
+          const data = await r.json();
+          setOracle(data);
+          addLog(`Oracle: ${data.oracle_pubkey.slice(0, 8)}… (backend)`);
+        } else {
+          setOracle(FALLBACK_ORACLE);
+          addLog("Backend unreachable — using devnet defaults");
+        }
+      } catch {
+        setOracle(FALLBACK_ORACLE);
+        addLog("Backend offline — using devnet defaults");
       }
       try {
         const r = await fetch(`${API_BASE}/api/songs`);
@@ -134,9 +156,13 @@ export default function Host() {
           const list: Song[] = await r.json();
           setSongs(list);
           if (list.length && !selectedSongId) setSelectedSongId(list[0].song_id);
+        } else {
+          setSongs(FALLBACK_SONGS);
+          setSelectedSongId(FALLBACK_SONGS[0].song_id);
         }
-      } catch (e: any) {
-        addLog(`songs: ${e.message}`);
+      } catch {
+        setSongs(FALLBACK_SONGS);
+        setSelectedSongId(FALLBACK_SONGS[0].song_id);
       }
     })();
   // eslint-disable-next-line react-hooks/exhaustive-deps
