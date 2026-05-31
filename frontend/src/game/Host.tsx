@@ -473,6 +473,19 @@ export default function Host() {
 
         {/* Lobby */}
         {phase === "lobby" && (
+          <div style={{ ...styles.card, background: "#16111f", border: "1px solid #2a1f3d" }}>
+            <div style={styles.cardTitle}>Wallet acting up?</div>
+            <div style={{ color: "#9ca3af", fontSize: 13, marginBottom: 12 }}>
+              Skip Solana entirely and play a quick hot-seat match on this laptop — two
+              singers, one mic, highest accuracy wins.
+            </div>
+            <a href="/local" style={{ display: "inline-block", background: "linear-gradient(135deg,#7c3aed,#6d28d9)", color: "#fff", textDecoration: "none", borderRadius: 8, padding: "10px 18px", fontSize: 14, fontWeight: 700 }}>
+              🎤 Play local — no wallet →
+            </a>
+          </div>
+        )}
+
+        {phase === "lobby" && (
           <div style={styles.card}>
             <div style={styles.cardTitle}>Create a Game</div>
 
