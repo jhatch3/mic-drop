@@ -8,10 +8,10 @@ Algorithm (see CLAUDE.md + tasks/stream-B-audio.md):
   semitones, convert to cents. A hit is |cents_error| <= 50.
 - score = 100 * frames_hit / frames_scored.
 """
-import io
-
 import librosa
 import numpy as np
+
+from common.audio import load_audio
 
 HOP_MS = 10
 SR = 16000
@@ -21,7 +21,8 @@ ALIGN_WINDOW_S = ALIGN_FRAMES * HOP_MS / 1000  # 0.030 s
 
 
 def score_take(audio_bytes: bytes, contour: dict, player_id: str) -> dict:
-    y, sr = librosa.load(io.BytesIO(audio_bytes), sr=SR, mono=True)
+    # Decode via PyAV (handles webm/opus from the browser; soundfile/librosa cannot).
+    y, sr = load_audio(audio_bytes, sr=SR), SR
     hop = int(sr * HOP_MS / 1000)
 
     f0, _, _ = librosa.pyin(
