@@ -19,8 +19,8 @@ export interface SongDef {
   audio:   string;
   lyrics:  string;
   contour: string;
-  title:   string;
-  artist:  string;
+  title?:  string;
+  artist?: string;
 }
 
 export const DEFAULT_SONG: SongDef = {

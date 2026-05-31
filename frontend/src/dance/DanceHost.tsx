@@ -1,4 +1,4 @@
-import { useState, useCallback, useRef, type CSSProperties } from "react";
+import { useState, useCallback, useRef, useEffect, forwardRef, type CSSProperties } from "react";
 import { useWallet } from "@solana/wallet-adapter-react";
 import { WalletMultiButton } from "@solana/wallet-adapter-react-ui";
 import { LAMPORTS_PER_SOL } from "@solana/web3.js";
@@ -8,13 +8,31 @@ import { useEscrow } from "../services/useEscrow";
 import { useDance } from "../services/useDance";
 import { useVoiceHost } from "../game/useVoiceHost";
 import PoseOverlay from "./PoseOverlay";
+import SongPicker from "../components/SongPicker";
 import { PAL, FONT, BevelBtn, Panel, Confetti, OnAirBar, StageBG, LowerThird, ScoreBug, Nameplate } from "@/ui";
-
-const DEMO_SONG_ID = "rasputin";
 const VIDEO_W = 640;
 const VIDEO_H = 480;
 
+const RATINGS = [
+  { min: 85, label: "PERFECT!",           color: "#fff700" },
+  { min: 70, label: "EXCELLENT!",         color: "#00e5ff" },
+  { min: 50, label: "GOOD",               color: "#69ff47" },
+  { min: 30, label: "OK",                 color: "#ff9800" },
+  { min: 10, label: "MEH",                color: "#ff4081" },
+  { min: 0,  label: "ARE YOU EVEN TRYING?", color: "#ff1744" },
+] as const;
+
+function getRating(score: number) {
+  return RATINGS.find((r) => score >= r.min) ?? RATINGS[RATINGS.length - 1];
+}
+
 const API_BASE = import.meta.env.VITE_API_BASE ?? "";
+
+// Seconds into the reference video where the game segment (choreo t=0) begins.
+// Should match segment_start_sec in the song's meta.json.
+const CHOREO_VIDEO_OFFSET: Record<string, number> = {
+  rasputin: 50,
+};
 
 // Epic victory fanfare, fired when the confetti shoots on the reveal.
 const playVictory = () => { try { const a = new Audio(`${API_BASE}/api/sfx/victory`); a.volume = 0.9; void a.play().catch(() => {}); } catch { /* */ } };
@@ -50,8 +68,26 @@ interface FinishResponse {
   mc_audio_url: string; payout_tx: string; leaderboard: Array<{ player: string; wins: number; losses: number }>;
 }
 
+const RefVideo = forwardRef<HTMLVideoElement, { src: string; active: boolean; startTime?: number; width: number; height: number }>(
+  function RefVideo({ src, active, startTime = 0, width, height }, ref) {
+    useEffect(() => {
+      const el = typeof ref === "object" ? ref?.current : null;
+      if (!el) return;
+      if (active) { el.currentTime = startTime; void el.play(); }
+      else el.pause();
+    }, [active, ref, startTime]);
+    return (
+      <video
+        ref={ref} src={src} width={width} height={height} muted playsInline
+        style={{ width: "100%", display: "block", background: "#111" }}
+      />
+    );
+  }
+);
+
 export default function DanceHost() {
   const wallet = useWallet();
+  const [songId, setSongId] = useState("rasputin");
   const [stakeSOL, setStakeSOL] = useState(
     () => new URLSearchParams(window.location.search).get("stake") ?? "0.001"
   );
@@ -118,7 +154,7 @@ export default function DanceHost() {
 
   // The dance turn auto-ends when the instrumental finishes → score it, advance the game.
   const onSongEndRef = useRef<() => void>(() => {});
-  const dance = useDance(DEMO_SONG_ID, () => onSongEndRef.current());
+  const dance = useDance(songId, () => onSongEndRef.current());
 
   // Start a turn instantly off the player's spoken "ready" (defined via a ref below; uses `voice`).
   const tryStartReadyRef = useRef<(t: string) => void>(() => {});
@@ -291,7 +327,7 @@ export default function DanceHost() {
 
     const fd = new FormData();
     fd.append("match_id", room.matchId || room.code);
-    fd.append("song_id", DEMO_SONG_ID);
+    fd.append("song_id", songId);
     fd.append("p1_pubkey", room.players[0]?.wallet || "p1");
     fd.append("p2_pubkey", room.players[1]?.wallet || "p2");
     fd.append("stake_lamports", String(room.stake ?? 0));
@@ -366,7 +402,28 @@ export default function DanceHost() {
   }, [room, dance, addLog, submitScore, voice, beginScoring, finishMatch]);
 
   const joinUrl = room ? `${window.location.origin}/play?code=${room.code}` : null;
-  const refFrame = dance.getCurrentRefFrame();
+  // Just Dance style rating popup
+  const [ratingPopup, setRatingPopup] = useState<{ label: string; color: string; key: number } | null>(null);
+  const ratingKeyRef = useRef(0);
+  const liveScoreRef = useRef(0);
+  liveScoreRef.current = dance.instantQuality;
+  useEffect(() => {
+    if (!dance.dancingActive) { setRatingPopup(null); return; }
+    const id = setInterval(() => {
+      const r = getRating(liveScoreRef.current);
+      setRatingPopup({ label: r.label, color: r.color, key: ++ratingKeyRef.current });
+      setTimeout(() => setRatingPopup(null), 1200);
+    }, 2500);
+    return () => clearInterval(id);
+  }, [dance.dancingActive]);
+
+  const refVideoRef = useRef<HTMLVideoElement>(null);
+  const choreoOffset = CHOREO_VIDEO_OFFSET[songId] ?? 0;
+  const videoTime = refVideoRef.current?.currentTime ?? 0;
+  const refFrame = dance.dancingActive && videoTime >= choreoOffset
+    ? dance.getFrameAt(videoTime - choreoOffset)
+    : null;
+  dance.scoreLiveFrame(refFrame);
   const page: CSSProperties = { position: "relative", zIndex: 10, minHeight: "100vh", display: "flex", flexDirection: "column", background: PAL.purpleDp, fontFamily: FONT.body };
   const center: CSSProperties = { flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 20, padding: "40px 20px", textAlign: "center" };
 
@@ -406,22 +463,51 @@ export default function DanceHost() {
   // Someone is on the floor: hand the whole screen to the live dance station (music + webcam
   // auto-start). The host + countdown drives it now — no manual start/stop buttons.
   if (singing && room) {
+    const videoExt = songId === "rasputin" ? "webm" : "mp4";
+    const refVideoSrc = `/assets/dances/${songId}.${videoExt}`;
+
     return (
       <div style={page}>
         <OnAirBar home="/dance" tag="ON AIR" tagColor={PAL.red} blink={false} right="MIC DROP DANCE · ON THE FLOOR" />
         <StageBG>
           <div style={{ flex: 1, minHeight: 0, overflowY: "auto", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "safe center", gap: 18, padding: "32px 18px", width: "100%", maxWidth: 880, margin: "0 auto" }}>
             <Nameplate kicker="NOW DANCING" name={singing === "p1" ? "PLAYER 1" : "PLAYER 2"} color={PAL.magenta} sub="LIVE" />
+            {/* Hidden webcam — stays in DOM for pose detection */}
+            <video ref={dance.videoRef} width={VIDEO_W} height={VIDEO_H} muted playsInline style={{ display: "none" }} />
+            {/* Reference dance video */}
             <div style={{ position: "relative", width: VIDEO_W, maxWidth: "100%", border: `4px solid ${PAL.ink}`, boxShadow: `6px 6px 0 ${PAL.ink}`, background: PAL.ink }}>
-              <video
-                ref={dance.videoRef} width={VIDEO_W} height={VIDEO_H} muted playsInline
-                style={{ width: "100%", borderRadius: 0, background: "#111", display: "block", transform: "scaleX(-1)" }}
-              />
+              <RefVideo ref={refVideoRef} src={refVideoSrc} active={dance.dancingActive} startTime={choreoOffset} width={VIDEO_W} height={VIDEO_H} />
               <PoseOverlay
                 width={VIDEO_W} height={VIDEO_H}
                 liveLandmarks={dance.landmarks} referenceFrame={refFrame}
                 score={dance.liveScore} active={dance.dancingActive}
               />
+              {/* Live score counter — climbs as you hit frames */}
+              <div style={{
+                position: "absolute", top: 8, right: 10, zIndex: 15,
+                fontFamily: FONT.display, fontSize: "clamp(18px,3.5vw,28px)",
+                color: PAL.slime, WebkitTextStroke: `1.5px ${PAL.ink}`,
+                textShadow: `2px 2px 0 ${PAL.ink}, 0 0 18px ${PAL.slime}`,
+                pointerEvents: "none",
+              }}>
+                {dance.liveScore}<span style={{ fontSize: "0.55em", opacity: 0.8 }}>/100</span>
+              </div>
+              {ratingPopup && (
+                <div key={ratingPopup.key} style={{
+                  position: "absolute", inset: 0, zIndex: 20,
+                  display: "flex", alignItems: "center", justifyContent: "center",
+                  pointerEvents: "none", animation: "jdPop 1.2s ease-out forwards",
+                }}>
+                  <div style={{
+                    fontFamily: FONT.display, fontSize: "clamp(32px,7vw,64px)", letterSpacing: 4,
+                    color: ratingPopup.color, WebkitTextStroke: `3px ${PAL.ink}`,
+                    textShadow: `4px 4px 0 ${PAL.ink}, 0 0 30px ${ratingPopup.color}`,
+                    textAlign: "center", padding: "0 12px",
+                  }}>
+                    {ratingPopup.label}
+                  </div>
+                </div>
+              )}
             </div>
             <Panel color={PAL.white} title={`${singing === "p1" ? "PLAYER 1" : "PLAYER 2"} IS DANCING`}
               titleBg={PAL.ink} titleFg={PAL.magenta} style={{ width: "100%", maxWidth: VIDEO_W }}>
@@ -488,6 +574,7 @@ export default function DanceHost() {
           {phase === "lobby" && (
             <>
               <div style={kicker(PAL.cyan)}>TONIGHT'S DANCE-OFF</div>
+              <SongPicker gamemode="dance" selectedId={songId} onSelect={setSongId} />
               <Panel color={PAL.white} title="SET THE BILL" titleBg={PAL.magenta} titleFg={PAL.white} style={{ width: "100%", maxWidth: 420 }}>
                 <label style={{ fontFamily: FONT.display, fontSize: 14, letterSpacing: 1, color: PAL.ink }}>WAGER (SOL)</label>
                 <input type="number" step="0.001" min="0.001" value={stakeSOL} onChange={(e) => setStakeSOL(e.target.value)}

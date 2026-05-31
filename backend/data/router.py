@@ -10,10 +10,21 @@ from fastapi import APIRouter, HTTPException, Query
 from typing import Optional
 
 from data.matches_store import get_leaderboard, get_top_scores
-from data.songs_store import list_catalog
+from data.songs_store import get_choreography, list_catalog
 
 router = APIRouter()
 log = logging.getLogger(__name__)
+
+
+@router.get("/songs/{song_id}/choreography")
+def song_choreography(song_id: str) -> dict:
+    try:
+        return get_choreography(song_id)
+    except KeyError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        log.exception("choreography fetch failed")
+        raise HTTPException(status_code=503, detail=f"snowflake unavailable: {e}")
 
 
 @router.get("/songs")

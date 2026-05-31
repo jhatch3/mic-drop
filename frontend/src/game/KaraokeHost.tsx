@@ -7,6 +7,7 @@ import { useGameRoom } from "../services/useGameRoom";
 import { useEscrow } from "../services/useEscrow";
 import { useVoiceHost } from "./useVoiceHost";
 import Karaoke, { type KaraokeResult } from "./Karaoke";
+import SongPicker from "../components/SongPicker";
 import { PAL, FONT, BevelBtn, Panel, Confetti, OnAirBar, StageBG, LowerThird, ScoreBug, Nameplate } from "@/ui";
 
 const kicker = (c: string): CSSProperties => ({ fontFamily: FONT.display, fontSize: "clamp(20px,4vw,30px)", letterSpacing: 4, color: c, textShadow: `2px 2px 0 ${PAL.ink}` });
@@ -23,7 +24,6 @@ function Captions({ host, you }: { host: string; you: string }) {
 }
 
 const API_BASE = import.meta.env.VITE_API_BASE ?? "";
-const SONG_ID = "firework";
 
 // Epic victory fanfare, fired when the confetti shoots on the reveal.
 const playVictory = () => { try { const a = new Audio(`${API_BASE}/api/sfx/victory`); a.volume = 0.9; void a.play().catch(() => {}); } catch { /* */ } };
@@ -52,6 +52,7 @@ interface FinishResponse {
 
 export default function KaraokeHost() {
   const wallet = useWallet();
+  const [songId, setSongId] = useState("firework");
   const [stakeSOL, setStakeSOL] = useState(
     () => new URLSearchParams(window.location.search).get("stake") ?? "0.001"
   );
@@ -261,7 +262,7 @@ export default function KaraokeHost() {
   const gradeTake = useCallback(async (take: Blob, player: "p1" | "p2") => {
     try {
       const fd = new FormData();
-      fd.append("song_id", SONG_ID);
+      fd.append("song_id", songId);
       fd.append("player", player);
       fd.append("take", take, `${player}.webm`);
       const r = await fetch(`${API_BASE}/api/match/grade`, { method: "POST", body: fd });
@@ -296,7 +297,7 @@ export default function KaraokeHost() {
     const p1Graded = gradeRef.current.p1 ? await gradeRef.current.p1 : null;
     const fd = new FormData();
     fd.append("match_id", room.matchId || room.code);
-    fd.append("song_id", SONG_ID);
+    fd.append("song_id", songId);
     fd.append("p1_pubkey", room.players[0]?.wallet || "p1");
     fd.append("p2_pubkey", room.players[1]?.wallet || "p2");
     fd.append("stake_lamports", String(room.stake ?? 0));
@@ -395,6 +396,12 @@ export default function KaraokeHost() {
     );
   }
 
+  const activeSong = {
+    audio:   `/assets/songs/${songId}/instrumental.mp3`,
+    lyrics:  `/assets/songs/${songId}/lyrics.json`,
+    contour: `/assets/songs/${songId}/contour.json`,
+  };
+
   // Someone is on stage: hand the whole screen to the live karaoke station (music auto-starts).
   // Keyed by `singing` so it cleanly remounts between P1 and P2.
   if (singing && room) {
@@ -402,6 +409,7 @@ export default function KaraokeHost() {
       <>
         <Karaoke
           key={singing}
+          song={activeSong}
           playerLabel={`${singing === "p1" ? "Player 1" : "Player 2"} — sing into this laptop!`}
           autoPlay
           onFinish={handleTurnFinish}
@@ -452,6 +460,7 @@ export default function KaraokeHost() {
           {phase === "lobby" && (
             <>
               <div style={kicker(PAL.yellow)}>TONIGHT'S MATCHUP</div>
+              <SongPicker gamemode="karaoke" selectedId={songId} onSelect={setSongId} />
               <Panel color={PAL.white} title="SET THE BILL" titleBg={PAL.purple} titleFg={PAL.white} style={{ width: "100%", maxWidth: 420 }}>
                 <label style={{ fontFamily: FONT.display, fontSize: 14, letterSpacing: 1, color: PAL.ink }}>WAGER (SOL)</label>
                 <input type="number" step="0.001" min="0.001" value={stakeSOL} onChange={(e) => setStakeSOL(e.target.value)}

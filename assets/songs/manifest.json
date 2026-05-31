@@ -3,12 +3,14 @@
     "song_id": "rasputin",
     "title": "Rasputin",
     "artist": "Boney M.",
-    "difficulty": 3
+    "difficulty": 3,
+    "gamemode": "dance"
   },
   {
     "song_id": "firework",
     "title": "Firework",
     "artist": "Katy Perry",
-    "difficulty": 3
+    "difficulty": 3,
+    "gamemode": "karaoke"
   }
 ]

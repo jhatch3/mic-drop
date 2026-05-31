@@ -46,6 +46,9 @@ export interface PoseDetectionState {
   fps: number;
   /** All frames captured since last resetFrames() call. */
   capturedFrames: PoseFrame[];
+  /** Synchronous read of captured frames — use this instead of capturedFrames
+   *  immediately after stopCapture(), which only schedules a state update. */
+  getFrames: () => PoseFrame[];
   startCapture: () => void;
   stopCapture: () => void;
   resetFrames: () => void;
@@ -173,8 +176,10 @@ export function usePoseDetection(): PoseDetectionState {
     };
   }, []);
 
+  const getFrames = useCallback(() => capturedFramesRef.current, []);
+
   return {
     landmarks, ready, error, fps, capturedFrames,
-    startCapture, stopCapture, resetFrames, videoRef,
+    getFrames, startCapture, stopCapture, resetFrames, videoRef,
   };
 }
