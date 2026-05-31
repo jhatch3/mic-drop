@@ -69,6 +69,30 @@ screen). A `leaderboard` view aggregates wins/losses/avg_score by pubkey;
 `GET /api/leaderboard` returns the top N. Schema in
 `backend/data/schema/matches.sql`.
 
+## 3c. P2 staking — laptop holds a pre-funded demo keypair (MVP)
+
+**Spec / invariant #7 said:** pay the winner's authenticated phone pubkey; both
+players stake their own SOL.
+
+**What we shipped (integration loop):** the program's `stake` only accepts a
+signer equal to the on-chain `player_one`/`player_two` (`lib.rs:42-47`), so a
+random laptop key cannot stake "for" the phone. To keep phones audio-free and
+sign-free for the demo, the laptop holds a **pre-funded demo P2 keypair**
+(`frontend/src/game/Host.tsx`, localStorage key `pb_p2_keypair` — the same key
+the `/` test UI funds) and:
+- records it as the on-chain `player_two` in `create_match`,
+- signs P2's `stake` from the laptop after P1 stakes (so the match reaches
+  `Staked` and the backend oracle's `settle`/`refund` actually fire),
+- sends it as `p2_pubkey` to `POST /api/match/finish`, so the on-chain payout
+  destination, the `settle` winner, and the Snowflake `matches.p2_pubkey` all
+  agree.
+
+**Consequence:** a P2 win pays the **demo keypair**, not the phone's wallet, and
+the leaderboard credits the demo pubkey for P2 results. This relaxes invariant
+#7 for the demo. The phone wallet remains identity/display only (room join,
+"you won/lost"). To restore true PvP later, have `Player.tsx` sign its own
+`stake` with the phone wallet and drop the demo key.
+
 ## 3. Escrow — extra `treasury` + `feeBps` fields
 
 **Spec said:** `EscrowClient.createMatch(stakeLamports, p2)` and `settle()`
