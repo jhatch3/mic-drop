@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import { useWallet, useConnection } from "@solana/wallet-adapter-react";
 import { WalletMultiButton } from "@solana/wallet-adapter-react-ui";
 import { AnchorProvider, Program, BN } from "@coral-xyz/anchor";
-import { PublicKey, LAMPORTS_PER_SOL, SystemProgram } from "@solana/web3.js";
+import { Keypair, PublicKey, LAMPORTS_PER_SOL, SystemProgram } from "@solana/web3.js";
 import QRCode from "react-qr-code";
 import { getSocket } from "./socket";
 import type { RoomState } from "./types";
@@ -14,6 +14,23 @@ const DEFAULT_TREASURY   = "2KnfMtidoDSVYxJDBNEK1e77rVQijvJ71zkBgz6kwejm";
 const FEE_BPS            = 100;  // 1%
 
 const API_BASE = import.meta.env.VITE_API_BASE ?? "";  // "" → use Vite proxy
+
+// ─── Demo P2 stake keypair ──────────────────────────────────────────────────
+// MVP staking model (contracts/DIVERGENCES.md #3c): the laptop holds P2's
+// keypair and stakes on its behalf so the match reaches `Staked` and the backend
+// oracle can settle. The phone wallet stays identity/display only. We reuse the
+// SAME storage key as the Solana test UI (App.tsx → "pb_p2_keypair") so this key
+// is the one you already funded once on devnet — no fresh airdrop per game.
+function persistedKeypair(storageKey: string): Keypair {
+  try {
+    const saved = localStorage.getItem(storageKey);
+    if (saved) return Keypair.fromSecretKey(Uint8Array.from(JSON.parse(saved)));
+  } catch { /* fall through and regenerate */ }
+  const kp = Keypair.generate();
+  localStorage.setItem(storageKey, JSON.stringify(Array.from(kp.secretKey)));
+  return kp;
+}
+const demoP2 = persistedKeypair("pb_p2_keypair");
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 type HostPhase = "lobby" | "waiting" | "gaming" | "scoring" | "finished";
@@ -81,6 +98,7 @@ export default function Host() {
   const [busy, setBusy] = useState(false);
   const [currentTurn, setCurrentTurn] = useState<{ player: string; wallet: string } | null>(null);
   const [finish, setFinish] = useState<FinishResponse | null>(null);
+  const [p2Bal, setP2Bal] = useState<number | null>(null);
 
   // Audio capture (laptop owns the mic — phones never record)
   const recorderRef = useRef<MediaRecorder | null>(null);
@@ -111,6 +129,11 @@ export default function Host() {
       } catch (e: any) {
         addLog(`songs: ${e.message}`);
       }
+      try {
+        const bal = await connection.getBalance(demoP2.publicKey);
+        setP2Bal(bal / LAMPORTS_PER_SOL);
+        addLog(`Demo P2 key ${demoP2.publicKey.toBase58().slice(0, 8)}… — ${(bal / LAMPORTS_PER_SOL).toFixed(3)} SOL`);
+      } catch { /* devnet unreachable — checked again at stake time */ }
     })();
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -180,12 +203,14 @@ export default function Host() {
       const program = getProgram();
       const matchId = room.code;
       matchIdRef.current = matchId;
-      const p2Wallet = new PublicKey(room.players[1].wallet);
       const mPda = matchPda(matchId, programId);
       const vPda = vaultPda(matchId, programId);
 
+      // player_two = the laptop-held demo key (not the phone wallet): the program
+      // only lets player_one/player_two sign `stake`, so the laptop can fund both
+      // stakes itself. The phone wallet stays identity/display only.
       await program.methods
-        .createMatch(matchId, new BN(room.stake), p2Wallet, oraclePk, treasury, FEE_BPS)
+        .createMatch(matchId, new BN(room.stake), demoP2.publicKey, oraclePk, treasury, FEE_BPS)
         .accounts({
           playerOne: wallet.publicKey,
           matchAccount: mPda,
@@ -204,7 +229,33 @@ export default function Host() {
           systemProgram: SystemProgram.programId,
         })
         .rpc();
-      addLog("P1 staked. Waiting for P2 to stake (auto-mock in this demo)…");
+      addLog("P1 staked. Funding + staking demo P2…");
+
+      // Make sure the demo P2 key can cover the stake (no-op if already funded).
+      const needLamports = room.stake + 5_000_000; // stake + fee headroom
+      const bal = await connection.getBalance(demoP2.publicKey);
+      if (bal < needLamports) {
+        addLog(`Demo P2 low (${(bal / LAMPORTS_PER_SOL).toFixed(4)} SOL) — requesting airdrop…`);
+        try {
+          const sig = await connection.requestAirdrop(demoP2.publicKey, LAMPORTS_PER_SOL);
+          await connection.confirmTransaction(sig, "confirmed");
+        } catch (e: any) {
+          addLog(`P2 airdrop failed: ${e.message}. Fund ${demoP2.publicKey.toBase58()} at faucet.solana.com, then retry.`);
+        }
+      }
+
+      await program.methods
+        .stake(matchId)
+        .accounts({
+          signer: demoP2.publicKey,
+          matchAccount: mPda,
+          vault: vPda,
+          systemProgram: SystemProgram.programId,
+        })
+        .signers([demoP2])
+        .rpc();
+      setP2Bal((await connection.getBalance(demoP2.publicKey)) / LAMPORTS_PER_SOL);
+      addLog("P2 staked. Match fully staked — backend oracle can settle. Starting turns…");
 
       socket.emit("match:set_id", { code: room.code, matchId });
       socket.emit("game:start", { code: room.code });
@@ -212,7 +263,7 @@ export default function Host() {
       addLog("Error: " + e.message);
     }
     setBusy(false);
-  }, [room, wallet.publicKey, oracle, selectedSongId, getProgram, socket]);
+  }, [room, wallet.publicKey, oracle, selectedSongId, getProgram, socket, connection]);
 
   // ── Mic capture ─────────────────────────────────────────────────────────
   async function startRecording() {
@@ -275,7 +326,9 @@ export default function Host() {
     fd.append("match_id", matchIdRef.current);
     fd.append("song_id", selectedSongId);
     fd.append("p1_pubkey", room.players[0].wallet);
-    fd.append("p2_pubkey", room.players[1].wallet);
+    // The demo key is the on-chain player_two + payout destination, so it must be
+    // what the oracle settles to and what Snowflake records for P2.
+    fd.append("p2_pubkey", demoP2.publicKey.toBase58());
     fd.append("stake_lamports", String(room.stake));
     fd.append("fee_bps", String(FEE_BPS));
     fd.append("take_p1", takesRef.current.p1!, "p1.webm");
@@ -351,6 +404,13 @@ export default function Host() {
               <div style={{ ...styles.label, marginBottom: 8 }}>
                 Backend oracle: <span style={styles.mono}>{oracle.oracle_pubkey.slice(0, 16)}…</span>
                 {" "}({oracle.escrow_mode})
+              </div>
+            )}
+
+            {oracle?.escrow_mode === "devnet" && (
+              <div style={{ ...styles.label, marginBottom: 8, color: p2Bal !== null && p2Bal < 0.015 ? "#f87171" : "#6b7280" }}>
+                Demo P2 stake key: <span style={styles.mono}>{demoP2.publicKey.toBase58().slice(0, 16)}…</span>
+                {p2Bal !== null && ` (${p2Bal.toFixed(3)} SOL)`}
               </div>
             )}
 
