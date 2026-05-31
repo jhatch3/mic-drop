@@ -105,7 +105,8 @@ async def dispatch(name: str, args: dict) -> tuple[dict, dict | None]:
         sfx_name = args.get("name", "airhorn")
         # warm the cache (generate on first use) off the event loop
         await asyncio.to_thread(sfx.get_sfx_path, sfx_name)
-        return {"played": sfx_name}, {"type": "sfx", "name": sfx_name}
+        duration = sfx.CATALOG.get(sfx_name, ("", 2.0))[1]
+        return {"played": sfx_name}, {"type": "sfx", "name": sfx_name, "duration": duration}
     if name == "get_standings":
         return await asyncio.to_thread(_get_standings), None
     if name == "get_song_info":

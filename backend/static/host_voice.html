@@ -59,17 +59,43 @@ const caption = (role, t) => {
 
 let ws, micCtx, playCtx, nextTime = 0, talking = false, micStream, proc;
 
-function playPCM24(arrayBuf) {
+// One shared playback timeline for BOTH host voice (PCM) and sound effects, so
+// they never overlap — whatever is queued first plays first; the next waits.
+function ensurePlay() {
   if (!playCtx) playCtx = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 24000 });
+  if (playCtx.state === "suspended") playCtx.resume();
+  return playCtx;
+}
+
+function playPCM24(arrayBuf) {
+  const ctx = ensurePlay();
   const i16 = new Int16Array(arrayBuf);
   const f32 = new Float32Array(i16.length);
   for (let i = 0; i < i16.length; i++) f32[i] = i16[i] / 32768;
-  const buf = playCtx.createBuffer(1, f32.length, 24000);
+  const buf = ctx.createBuffer(1, f32.length, 24000);
   buf.copyToChannel(f32, 0);
-  const src = playCtx.createBufferSource();
-  src.buffer = buf; src.connect(playCtx.destination);
-  const t = Math.max(playCtx.currentTime + 0.02, nextTime);
+  const src = ctx.createBufferSource();
+  src.buffer = buf; src.connect(ctx.destination);
+  const t = Math.max(ctx.currentTime + 0.02, nextTime);
   src.start(t); nextTime = t + buf.duration;
+}
+
+// Reserve the SFX's slot on the shared timeline immediately (using its known
+// duration), then fetch+decode and play it at that exact slot. Voice queued
+// after this will start only once the SFX finishes.
+async function scheduleSfx(name, duration) {
+  const ctx = ensurePlay();
+  const start = Math.max(ctx.currentTime + 0.02, nextTime);
+  nextTime = start + (duration || 2);           // reserve now, before decode
+  logLine(`🔊 SFX: ${name}`);
+  try {
+    const ab = await (await fetch(`/sfx-audio/${name}.mp3`)).arrayBuffer();
+    const buf = await ctx.decodeAudioData(ab);
+    const src = ctx.createBufferSource();
+    src.buffer = buf; src.connect(ctx.destination);
+    src.start(start);
+    nextTime = Math.max(nextTime, start + buf.duration);   // extend only, never overlap
+  } catch (e) { logLine(`sfx load failed: ${name}`); }
 }
 
 function openWS() {
@@ -83,7 +109,7 @@ function openWS() {
     if (ev.data instanceof ArrayBuffer) { playPCM24(ev.data); return; }
     let m; try { m = JSON.parse(ev.data); } catch { return; }
     if (m.type === "status") setStatus(m.msg);
-    else if (m.type === "sfx") { logLine(`🔊 SFX: ${m.name}`); new Audio(`/sfx-audio/${m.name}.mp3`).play().catch(()=>{}); }
+    else if (m.type === "sfx") { scheduleSfx(m.name, m.duration); }
     else if (m.type === "game") logLine(`🎮 game command: ${m.command}`);
     else if (m.type === "caption") caption(m.role, m.text);
     else if (m.type === "turn_complete") { /* host finished a turn */ }
