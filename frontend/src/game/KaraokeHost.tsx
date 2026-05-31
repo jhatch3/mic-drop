@@ -5,7 +5,7 @@ import { LAMPORTS_PER_SOL } from "@solana/web3.js";
 import QRCode from "react-qr-code";
 import { useGameRoom } from "../services/useGameRoom";
 import { useEscrow } from "../services/useEscrow";
-import { useKaraoke } from "../services/useKaraoke";
+import Karaoke, { type KaraokeResult } from "./Karaoke";
 
 export default function KaraokeHost() {
   const wallet = useWallet();
@@ -14,7 +14,14 @@ export default function KaraokeHost() {
   );
   const { room, phase, currentTurn, log, addLog, createRoom, beginGame, submitScore } = useGameRoom();
   const { busy, createAndStake, settle } = useEscrow(addLog);
-  const { submitMockScore } = useKaraoke();
+
+  // The laptop is the karaoke station: it runs the real pitch+lyrics for whoever's
+  // turn it is and submits the real score. (Phones never sing.)
+  const handleTurnFinish = useCallback((result: KaraokeResult) => {
+    if (!currentTurn) return;
+    addLog(`${currentTurn.player}: ${result.score}/100`);
+    submitScore(currentTurn.wallet, result.score);
+  }, [currentTurn, addLog, submitScore]);
 
   const handleCreateRoom = useCallback(() => {
     if (!wallet.publicKey) return;
@@ -31,12 +38,6 @@ export default function KaraokeHost() {
     }
   }, [room, createAndStake, beginGame, addLog]);
 
-  const handleSubmitScore = useCallback(() => {
-    if (!currentTurn) return;
-    const score = submitMockScore();
-    addLog(`${currentTurn.player} score: ${score}/100`);
-    submitScore(currentTurn.wallet, score);
-  }, [currentTurn, submitMockScore, addLog, submitScore]);
 
   const joinUrl = room ? `${window.location.origin}/play?code=${room.code}` : null;
 
@@ -89,23 +90,25 @@ export default function KaraokeHost() {
         )}
 
         {phase === "gaming" && room && (
-          <div style={S.card}>
-            <div style={S.cardTitle}>
-              {currentTurn ? `${currentTurn.player} is Singing…` : "Get Ready"}
+          currentTurn ? (
+            // Laptop sings this turn for real (pitch + lyrics); score auto-submits on finish.
+            <Karaoke
+              key={currentTurn.wallet}
+              playerLabel={`${currentTurn.player} — sing into this laptop!`}
+              onFinish={handleTurnFinish}
+            />
+          ) : (
+            <div style={S.card}>
+              <div style={S.cardTitle}>Get Ready…</div>
+              <div style={{ marginTop: 12 }}>
+                {room.players.map((p) => (
+                  <div key={p.wallet} style={S.playerRow}>
+                    {p.name}: {p.score !== null ? `${p.score}/100` : "—"}
+                  </div>
+                ))}
+              </div>
             </div>
-            {currentTurn && (
-              <Btn onClick={handleSubmitScore} busy={false} color="#4ade80" style={{ margin: "12px 0" }}>
-                Submit Score (mock)
-              </Btn>
-            )}
-            <div style={{ marginTop: 12 }}>
-              {room.players.map((p) => (
-                <div key={p.wallet} style={S.playerRow}>
-                  {p.name}: {p.score !== null ? `${p.score}/100` : "—"}
-                </div>
-              ))}
-            </div>
-          </div>
+          )
         )}
 
         {phase === "finished" && room && (
