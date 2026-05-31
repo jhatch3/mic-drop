@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import asyncio
 import re
+from concurrent.futures import ThreadPoolExecutor
 from typing import AsyncIterator, Protocol
 
 from . import config, voices
@@ -26,6 +27,11 @@ from . import config, voices
 from .commentary import MockCommentary  # noqa: E402
 
 _TAG_RE = re.compile(r"\[[^\]\n]{1,40}\]")
+
+# Dedicated thread pool for streaming TTS so the live host's voice is NEVER starved by the
+# default executor (where the heavy whisper scoring runs). The host can keep talking with no
+# pauses even while the backend is transcribing/scoring a take.
+_VOICE_POOL = ThreadPoolExecutor(max_workers=4, thread_name_prefix="mc-voice")
 
 
 def strip_audio_tags(text: str) -> str:
@@ -58,7 +64,7 @@ async def _aiter_sync_stream(make_gen) -> AsyncIterator[bytes]:
         finally:
             loop.call_soon_threadsafe(queue.put_nowait, None)
 
-    fut = loop.run_in_executor(None, produce)
+    fut = loop.run_in_executor(_VOICE_POOL, produce)
     try:
         while True:
             chunk = await queue.get()
@@ -72,6 +78,9 @@ async def _aiter_sync_stream(make_gen) -> AsyncIterator[bytes]:
 class VoiceProvider(Protocol):
     def stream(
         self, text: str, voice: str | None = None, expressive: bool = False
+    ) -> AsyncIterator[bytes]: ...
+    def stream_pcm(
+        self, text: str, voice: str | None = None
     ) -> AsyncIterator[bytes]: ...
     async def synthesize(
         self, text: str, key: str | None = None, voice: str | None = None,
@@ -92,6 +101,11 @@ class MockVoice:
         data = self._fallback_bytes()
         if data:
             yield data
+
+    async def stream_pcm(self, text: str, voice: str | None = None) -> AsyncIterator[bytes]:
+        # no raw-PCM fallback clip — stay silent rather than play an mp3 as PCM noise
+        return
+        yield b""  # pragma: no cover — makes this an async generator
 
     async def synthesize(
         self, text: str, key: str | None = None, voice: str | None = None,
@@ -118,6 +132,20 @@ class ElevenLabsVoice:
             voice_id=voices.resolve(voice),
             model_id=model_id,
         )
+
+    def _make_gen_pcm(self, text: str, voice: str | None):
+        # Raw PCM 16-bit @ 24kHz so the browser can play it on the same AudioContext as the
+        # Gemini-era audio path (no mp3 decode). Fast flash model for low-latency streaming.
+        return self._client.text_to_speech.stream(
+            text=strip_audio_tags(text),
+            voice_id=voices.resolve(voice),
+            model_id=config.ELEVENLABS_MODEL,
+            output_format="pcm_24000",
+        )
+
+    async def stream_pcm(self, text: str, voice: str | None = None) -> AsyncIterator[bytes]:
+        async for chunk in _aiter_sync_stream(lambda: self._make_gen_pcm(text, voice)):
+            yield chunk
 
     async def stream(
         self, text: str, voice: str | None = None, expressive: bool = False

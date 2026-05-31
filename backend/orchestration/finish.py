@@ -95,6 +95,15 @@ async def _score_pair(
     )
 
 
+async def grade_one(audio_bytes: bytes, song_id: str, player: str) -> dict:
+    """Grade a SINGLE take (80% timed lyrics + 20% pitch). Called for Player 1 in the
+    background while Player 2 is still singing, so finish only has to grade the late take.
+    """
+    contour = get_contour(song_id)
+    lines = _reference_lines(song_id)
+    return await asyncio.to_thread(_grade_take, audio_bytes, contour, lines, player)
+
+
 def _pick_winner(s1: dict, s2: dict) -> str:
     """'p1' | 'p2' | 'tie' — score wins, then frames_hit, else tie."""
     if s1["score"] != s2["score"]:
@@ -171,6 +180,7 @@ def _persist(
     stake_lamports: int,
     fee_bps: int,
     payout_tx: str,
+    gamemode: str = "karaoke",
 ) -> None:
     winner_pubkey: str | None
     if winner_label == "p1":
@@ -196,6 +206,7 @@ def _persist(
             fee_bps=fee_bps,
             payout_tx=payout_tx,
             escrow_mode=_escrow_mode(),
+            gamemode=gamemode,
         )
     except Exception:  # noqa: BLE001
         log.exception("snowflake match insert failed for %s", match_id)
@@ -222,16 +233,28 @@ async def handle_finish(
     gamemode: str = "karaoke",
     p1_score: int | None = None,
     p2_score: int | None = None,
+    p1_graded: dict | None = None,
+    p2_graded: dict | None = None,
 ) -> dict[str, Any]:
     if gamemode == "dance" and p1_score is not None and p2_score is not None:
         # Dance mode: scores come from the pose tracker on the client.
         s1: dict = {"song_id": song_id, "player_id": "p1", "score": p1_score, "frames_scored": 0, "frames_hit": p1_score}
         s2: dict = {"song_id": song_id, "player_id": "p2", "score": p2_score, "frames_scored": 0, "frames_hit": p2_score}
     else:
-        # Karaoke: 80% timing-aware lyrics + 20% pitch, scored on the backend.
+        # Karaoke: 80% timing-aware lyrics + 20% pitch. A take that was already graded in the
+        # background (Player 1, during Player 2's turn) is reused — only the late take is graded.
         contour = get_contour(song_id)
         lines = _reference_lines(song_id)
-        s1, s2 = await _score_pair(p1_bytes or b"", p2_bytes or b"", contour, lines)
+
+        async def _resolve(graded: dict | None, audio: bytes | None, player: str) -> dict:
+            if graded:
+                return graded
+            return await asyncio.to_thread(_grade_take, audio or b"", contour, lines, player)
+
+        s1, s2 = await asyncio.gather(
+            _resolve(p1_graded, p1_bytes, "p1"),
+            _resolve(p2_graded, p2_bytes, "p2"),
+        )
 
     # 3. Winner.
     winner = _pick_winner(s1, s2)
@@ -259,6 +282,7 @@ async def handle_finish(
         stake_lamports=stake_lamports,
         fee_bps=fee_bps,
         payout_tx=payout_tx,
+        gamemode=gamemode,
     )
 
     leaderboard = _safe_leaderboard()

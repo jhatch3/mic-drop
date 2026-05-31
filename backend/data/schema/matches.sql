@@ -23,8 +23,12 @@ CREATE TABLE IF NOT EXISTS matches (
   fee_bps         INTEGER       NOT NULL DEFAULT 0,
   payout_tx       VARCHAR,
   escrow_mode     VARCHAR       NOT NULL,           -- mock | devnet
+  gamemode        VARCHAR       NOT NULL DEFAULT 'karaoke',  -- karaoke | dance
   settled_at      TIMESTAMP_NTZ NOT NULL DEFAULT CURRENT_TIMESTAMP()
 );
+
+-- Existing tables: add the column once with
+--   ALTER TABLE matches ADD COLUMN IF NOT EXISTS gamemode VARCHAR NOT NULL DEFAULT 'karaoke';
 
 -- Per-pubkey aggregate. wins/losses count finished matches with a winner;
 -- ties contribute to `ties` only. games = wins + losses + ties.

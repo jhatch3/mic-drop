@@ -7,7 +7,9 @@ import logging
 
 from fastapi import APIRouter, HTTPException, Query
 
-from data.matches_store import get_leaderboard
+from typing import Optional
+
+from data.matches_store import get_leaderboard, get_top_scores
 from data.songs_store import list_catalog
 
 router = APIRouter()
@@ -30,4 +32,18 @@ def leaderboard(limit: int = Query(20, ge=1, le=100)) -> list[dict]:
     except Exception as e:  # noqa: BLE001
         log.exception("leaderboard fetch failed")
         # Empty list is a better UX than 5xx — the result screen still renders.
+        return []
+
+
+@router.get("/leaderboard/scores")
+def top_scores(
+    song_id: Optional[str] = Query(None),
+    gamemode: Optional[str] = Query(None),
+    limit: int = Query(50, ge=1, le=200),
+) -> list[dict]:
+    """Highest individual take scores, optionally filtered to one song_id and/or gamemode."""
+    try:
+        return get_top_scores(song_id=song_id, gamemode=gamemode, limit=limit)
+    except Exception:  # noqa: BLE001
+        log.exception("top-scores fetch failed")
         return []

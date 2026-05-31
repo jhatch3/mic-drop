@@ -69,6 +69,12 @@ DECLARATIONS = [
         description="End the match and trigger scoring + the final roast.",
         parameters=types.Schema(type="OBJECT", properties={}),
     ),
+    types.FunctionDeclaration(
+        name="reveal_scores",
+        description="Show the final scoreboard on screen. Call this AS you announce the results "
+                    "so the scores appear while you read them out. Only after scoring is done.",
+        parameters=types.Schema(type="OBJECT", properties={}),
+    ),
 ]
 
 TOOL = types.Tool(function_declarations=DECLARATIONS)
@@ -111,6 +117,6 @@ async def dispatch(name: str, args: dict) -> tuple[dict, dict | None]:
         return await asyncio.to_thread(_get_standings), None
     if name == "get_song_info":
         return await asyncio.to_thread(_get_song_info, args.get("song_id", "")), None
-    if name in ("start_game", "start_p1_turn", "start_p2_turn", "end_game"):
+    if name in ("start_game", "start_p1_turn", "start_p2_turn", "end_game", "reveal_scores"):
         return {"status": "ok", "command": name}, {"type": "game", "command": name}
     return {"error": f"unknown tool {name}"}, None

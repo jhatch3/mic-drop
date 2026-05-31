@@ -29,6 +29,11 @@ CATALOG: dict[str, tuple[str, float]] = {
     "buzzer": ("harsh game-show wrong-answer buzzer", 1.0),
     "suspense": ("tense game-show suspense sting before a reveal", 3.0),
     "record_scratch": ("vinyl record scratch stop", 1.0),
+    "scoring_music": (
+        "upbeat quirky game-show 'please hold' background music bed, light bouncy synth "
+        "and percussion, steady groove, seamless loop, no abrupt start or ending",
+        22.0,
+    ),
 }
 
 
