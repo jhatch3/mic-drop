@@ -48,7 +48,7 @@ const FALLBACK_SONGS: Song[] = [
 
 
 // ─── Types ───────────────────────────────────────────────────────────────────
-type HostPhase = "lobby" | "waiting" | "gaming" | "handoff" | "scoring" | "finished";
+type HostPhase = "lobby" | "waiting" | "gaming" | "waiting_p2" | "scoring" | "finished";
 
 interface OracleInfo {
   oracle_pubkey: string;
@@ -137,7 +137,6 @@ export default function Host() {
   const [log, setLog] = useState<string[]>([]);
   const [busy, setBusy] = useState(false);
   const [currentTurn, setCurrentTurn] = useState<{ player: string; wallet: string } | null>(null);
-  const [singer, setSinger] = useState<"p1" | "p2">("p1");
   const [p1Score, setP1Score] = useState<KaraokeResult | null>(null);
   const [p2Score, setP2Score] = useState<KaraokeResult | null>(null);
   const [finish, setFinish] = useState<FinishResponse | null>(null);
@@ -148,6 +147,10 @@ export default function Host() {
   const chunksRef = useRef<Blob[]>([]);
   const takesRef = useRef<{ p1?: Blob; p2?: Blob }>({});
   const matchIdRef = useRef<string | null>(null);
+  // Holds the latest settle fn so the socket "game:over" handler (registered in an
+  // effect with a stale closure) always calls the current version. Assigned below
+  // once settleMatch is defined.
+  const settleRef = useRef<(r: RoomState) => void>(() => {});
 
   const addLog = (msg: string) =>
     setLog((p) => [`${new Date().toLocaleTimeString()} — ${msg}`, ...p]);
@@ -207,12 +210,21 @@ export default function Host() {
     });
     socket.on("turn:start", (t: { player: string; wallet: string }) => {
       setCurrentTurn(t);
-      addLog(`${t.player}'s turn — recording`);
-      void startRecording();
+      // The laptop only owns the mic for ITS player (P1). P2 sings on their own
+      // device, so don't grab the laptop mic (or prompt for it) on P2's turn.
+      if (wallet.publicKey && t.wallet === wallet.publicKey.toBase58()) {
+        addLog(`${t.player}'s turn (you) — recording`);
+        void startRecording();
+      } else {
+        addLog(`${t.player} is singing on their own device…`);
+      }
     });
-    socket.on("game:over", () => {
-      // Server's tally is bogus (we pushed 0s to drive state); ignore it.
-      // The real result arrives from POST /api/match/finish below.
+    socket.on("game:over", (r: RoomState) => {
+      // Both players have submitted real scores (P1 from this laptop, P2 from
+      // their own device). Settle on-chain from the room's authoritative scores.
+      setRoom(r);
+      addLog("Both takes in — settling on-chain…");
+      settleRef.current(r);
     });
     socket.on("stakes:ready", (r: RoomState) => {
       setRoom(r);
@@ -423,17 +435,18 @@ export default function Host() {
     }
   }, [room, selectedSongId, socket]);
 
-  // Settle the on-chain escrow using the local oracle keypair and the
-  // client-side karaoke scores. Higher score wins; ties go to P1.
-  const settleOnChain = useCallback(async (p1r: KaraokeResult, p2r: KaraokeResult) => {
+  // Settle the on-chain escrow using the local oracle keypair and the two final
+  // karaoke scores. P1's score comes from this laptop; P2's arrives over the
+  // socket from P2's own device. Higher score wins; ties go to P1.
+  const settleMatch = useCallback(async (p1Final: number, p2Final: number) => {
     if (!room || !oracle) return;
     setPhase("scoring");
-    const p1Wins = p1r.score >= p2r.score;
+    const p1Wins = p1Final >= p2Final;
     const winnerWalletStr = p1Wins ? room.players[0]?.wallet : room.players[1]?.wallet;
     if (!winnerWalletStr) { addLog("No winner wallet — can't settle"); return; }
     const winnerPubkey = new PublicKey(winnerWalletStr);
     const label = p1Wins ? "P1" : "P2";
-    addLog(`Settling on-chain — ${label} wins (${p1r.score} vs ${p2r.score})…`);
+    addLog(`Settling on-chain — ${label} wins (${p1Final} vs ${p2Final})…`);
     let payout_tx = "(settle failed)";
     let commentary = "";
     try {
@@ -457,7 +470,7 @@ export default function Host() {
         .rpc();
       payout_tx = sig;
       addLog(`✅ Settled! ${label} wins. tx=${sig.slice(0, 12)}…`);
-      const margin = Math.abs(p1r.score - p2r.score);
+      const margin = Math.abs(p1Final - p2Final);
       commentary = margin === 0
         ? "A dead tie — sing it again!"
         : margin <= 5
@@ -466,14 +479,16 @@ export default function Host() {
             ? `${label} takes the win. Respectable battle.`
             : `${label} absolutely bodied that. Game over.`;
     } catch (e: any) {
-      console.error("[settleOnChain]", e);
+      console.error("[settleMatch]", e);
       addLog(`❌ Settle failed: ${errDetail(e)}`);
-      commentary = `${label} wins on points (${p1r.score} vs ${p2r.score}) — settle failed, check oracle balance.`;
+      commentary = `${label} wins on points (${p1Final} vs ${p2Final}) — settle failed, check oracle balance.`;
     }
     setFinish({
       scores: [
-        { song_id: selectedSongId, player_id: "p1", score: p1r.score, frames_scored: p1r.scored, frames_hit: p1r.hits },
-        { song_id: selectedSongId, player_id: "p2", score: p2r.score, frames_scored: p2r.scored, frames_hit: p2r.hits },
+        // P1's frame counts are known locally; P2 only sends its final score over
+        // the socket, so its frame breakdown isn't available on the laptop.
+        { song_id: selectedSongId, player_id: "p1", score: p1Final, frames_scored: p1Score?.scored ?? 0, frames_hit: p1Score?.hits ?? 0 },
+        { song_id: selectedSongId, player_id: "p2", score: p2Final, frames_scored: 0, frames_hit: 0 },
       ],
       winner: p1Wins ? "p1" : "p2",
       commentary,
@@ -483,7 +498,12 @@ export default function Host() {
     });
     socket.emit("match:finished", { code: room.code, winner: p1Wins ? "p1" : "p2" });
     setPhase("finished");
-  }, [room, oracle, getProgram, selectedSongId, socket]);
+  }, [room, oracle, getProgram, selectedSongId, socket, p1Score]);
+
+  // Keep settleRef pointed at the current settleMatch so the socket "game:over"
+  // handler (registered with a stale closure) always settles with fresh state.
+  settleRef.current = (r: RoomState) =>
+    void settleMatch(r.players[0]?.score ?? 0, r.players[1]?.score ?? 0);
 
   const joinUrl = room ? `${window.location.origin}/play?code=${room.code}` : null;
   const winnerWallet =
@@ -595,8 +615,32 @@ export default function Host() {
           </div>
         )}
 
-        {/* Handoff — P1 done, pass to P2 */}
-        {phase === "handoff" && room && p1Score && (
+        {/* Gaming — this laptop only sings P1's turn. P2 sings on their own device. */}
+        {phase === "gaming" && room && (
+          <div>
+            <div style={{ ...styles.card, marginBottom: 8, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+              <div>
+                <div style={styles.cardTitle}>🎤 P1's Turn</div>
+                <div style={{ color: "#6b7280", fontSize: 12, marginTop: 2 }}>
+                  {room.players[0]?.wallet.slice(0, 10)}…
+                </div>
+              </div>
+            </div>
+            <Karaoke
+              key="p1"
+              playerLabel="P1"
+              onFinish={(result: KaraokeResult) => {
+                setP1Score(result);
+                socket.emit("score:submit", { code: room.code, wallet: room.players[0].wallet, score: result.score });
+                setPhase("waiting_p2");
+                addLog(`P1 done — ${result.score}/100. Waiting for P2 to sing on their device…`);
+              }}
+            />
+          </div>
+        )}
+
+        {/* Waiting for P2 — P1 is done; P2 sings the same song on their own device */}
+        {phase === "waiting_p2" && room && p1Score && (
           <div style={styles.card}>
             <div style={styles.cardTitle}>Round 1 complete!</div>
             <div style={{ textAlign: "center", padding: "16px 0" }}>
@@ -607,52 +651,9 @@ export default function Host() {
               }}>{p1Score.score}</div>
               <div style={{ color: "#374151", fontSize: 12, marginTop: 4 }}>{p1Score.hits} / {p1Score.scored} frames hit</div>
             </div>
-            <div style={{ color: "#9ca3af", fontSize: 14, textAlign: "center", margin: "8px 0 20px" }}>
-              🎤 Pass the laptop to <b style={{ color: "#fff" }}>P2</b> — same song!
+            <div style={{ color: "#9ca3af", fontSize: 14, textAlign: "center", margin: "8px 0 4px" }}>
+              🎤 <b style={{ color: "#fff" }}>P2</b> is singing on their own device — hang tight, we&apos;ll settle automatically.
             </div>
-            <Btn onClick={() => setPhase("gaming")} busy={false} color="#8b5cf6">
-              P2&apos;s turn →
-            </Btn>
-          </div>
-        )}
-
-        {/* Gaming — full karaoke screen, one turn at a time */}
-        {phase === "gaming" && room && (
-          <div>
-            <div style={{ ...styles.card, marginBottom: 8, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-              <div>
-                <div style={styles.cardTitle}>
-                  {singer === "p1" ? "🎤 P1's Turn" : "🎤 P2's Turn"}
-                </div>
-                <div style={{ color: "#6b7280", fontSize: 12, marginTop: 2 }}>
-                  {singer === "p1" ? room.players[0]?.wallet.slice(0, 10) : room.players[1]?.wallet.slice(0, 10)}…
-                </div>
-              </div>
-              {p1Score && (
-                <div style={{ textAlign: "right" }}>
-                  <div style={{ color: "#6b7280", fontSize: 11 }}>P1 score</div>
-                  <div style={{ color: "#4ade80", fontWeight: 700, fontSize: 20 }}>{p1Score.score}</div>
-                </div>
-              )}
-            </div>
-            <Karaoke
-              key={singer}
-              playerLabel={singer === "p1" ? "P1" : "P2"}
-              onFinish={(result: KaraokeResult) => {
-                if (singer === "p1") {
-                  setP1Score(result);
-                  setSinger("p2");
-                  setPhase("handoff");
-                  socket.emit("score:submit", { code: room.code, wallet: room.players[0].wallet, score: result.score });
-                  addLog(`P1 done — score: ${result.score}/100. Pass to P2!`);
-                } else {
-                  setP2Score(result);
-                  socket.emit("score:submit", { code: room.code, wallet: room.players[1]?.wallet, score: result.score });
-                  addLog(`P2 done — score: ${result.score}/100. Settling…`);
-                  void settleOnChain(p1Score!, result);
-                }
-              }}
-            />
           </div>
         )}
 

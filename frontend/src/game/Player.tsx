@@ -5,6 +5,7 @@ import { AnchorProvider, Program, BN } from "@coral-xyz/anchor";
 import { PublicKey, SystemProgram } from "@solana/web3.js";
 import { getSocket } from "./socket";
 import type { RoomState } from "./types";
+import Karaoke, { DEFAULT_SONG, type KaraokeResult } from "./Karaoke";
 import IDL from "../idl/pitch_battle.json";
 
 const PROGRAM_ID = new PublicKey("2eMwChdNVoxeoWjdaiTuBGasDiHCKN3jbw7dL5eSyuZf");
@@ -35,6 +36,7 @@ export default function Player() {
   const [room, setRoom] = useState<RoomState | null>(null);
   const [joined, setJoined] = useState(false);
   const [myTurn, setMyTurn] = useState(false);
+  const [turnDone, setTurnDone] = useState(false);
   const [gameOver, setGameOver] = useState(false);
   const [finish, setFinish] = useState<FinishPayload | null>(null);
   const [log, setLog] = useState<string[]>([]);
@@ -55,6 +57,7 @@ export default function Player() {
     socket.on("turn:start", (t: { player: string; wallet: string }) => {
       if (wallet.publicKey && t.wallet === wallet.publicKey.toBase58()) {
         setMyTurn(true);
+        setTurnDone(false);
         addLog("It's YOUR turn — sing!");
       } else {
         setMyTurn(false);
@@ -115,8 +118,28 @@ export default function Player() {
     addLog(`Joining room ${code}…`);
   };
 
+  // This device owns the mic for ITS player's turn (per the device model, the
+  // singer's own screen runs the karaoke + client-side pitch graph). When done we
+  // send only the final score over the socket — no audio ever leaves this device.
+  const finishTurn = useCallback((result: KaraokeResult) => {
+    if (!room || !wallet.publicKey) return;
+    socket.emit("score:submit", { code: room.code, wallet: wallet.publicKey.toBase58(), score: result.score });
+    setMyTurn(false);
+    setTurnDone(true);
+    addLog(`You scored ${result.score}/100 — waiting for the result…`);
+  }, [room, wallet.publicKey, socket]);
+
   const myInfo = room?.players.find((p) => p.wallet === wallet.publicKey?.toBase58());
   const opponentInfo = room?.players.find((p) => p.wallet !== wallet.publicKey?.toBase58());
+
+  // It's this player's turn to sing → take over the whole screen with the karaoke
+  // station. Highest pitch accuracy wins; the laptop settles the wager on-chain.
+  if (
+    joined && room && !gameOver && myTurn && !turnDone &&
+    (room.state === "p1_singing" || room.state === "p2_singing")
+  ) {
+    return <Karaoke song={DEFAULT_SONG} playerLabel="Your turn" onFinish={finishTurn} />;
+  }
 
   return (
     <div style={styles.root}>
@@ -199,7 +222,7 @@ export default function Player() {
               <>
                 <div style={{ ...styles.cardTitle, color: "#4ade80", fontSize: 20 }}>Your Turn! 🎤</div>
                 <div style={{ color: "#9ca3af", fontSize: 14, margin: "12px 0" }}>
-                  Sing into the laptop mic. The host controls scoring.
+                  Loading the karaoke screen on this device…
                 </div>
                 <div style={styles.pulse} />
               </>
