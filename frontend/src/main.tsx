@@ -1,3 +1,4 @@
+import "./index.css";
 import { StrictMode, useMemo } from "react";
 import { createRoot } from "react-dom/client";
 import { ConnectionProvider, WalletProvider } from "@solana/wallet-adapter-react";
@@ -7,6 +8,7 @@ import "@solana/wallet-adapter-react-ui/styles.css";
 import App from "./App";
 import Player from "./game/Player";
 import Karaoke from "./game/Karaoke";
+import { RetroBackground, Scanlines } from "./retro";
 import LocalGame from "./game/LocalGame";
 import KaraokeHost from "./game/KaraokeHost";
 import DanceHost from "./dance/DanceHost";
@@ -66,7 +68,9 @@ function Root() {
     <ConnectionProvider endpoint={RPC}>
       <WalletProvider wallets={wallets} autoConnect>
         <WalletModalProvider>
+          <RetroBackground />
           <Router />
+          <Scanlines />
         </WalletModalProvider>
       </WalletProvider>
     </ConnectionProvider>

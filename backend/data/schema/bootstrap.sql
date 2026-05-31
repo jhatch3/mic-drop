@@ -21,11 +21,20 @@ GRANT SELECT, INSERT, UPDATE, DELETE ON FUTURE TABLES IN SCHEMA MICDROP.PUBLIC T
 GRANT SELECT ON FUTURE VIEWS  IN SCHEMA MICDROP.PUBLIC TO ROLE MICDROP_APP;
 
 -- Replace the placeholder password before running; share it via .env, not git.
+-- Password must satisfy Snowflake policy: >=8 chars, with an uppercase, a
+-- lowercase, AND a digit. Share it via .env, not git.
 CREATE USER IF NOT EXISTS MICDROP_APP_USER
-  PASSWORD = 'drewandval4ever'
+  PASSWORD = 'DrewAndVal4ever'
   MUST_CHANGE_PASSWORD = FALSE
   DEFAULT_ROLE = MICDROP_APP
   DEFAULT_WAREHOUSE = MICDROP_WH
   DEFAULT_NAMESPACE = MICDROP.PUBLIC
   COMMENT = 'Pitch Battle backend service account';
+-- Ensure role/warehouse defaults are set even if the user pre-existed. (Do NOT
+-- re-set PASSWORD here: setting it to the current value trips the PRIOR_USE policy.)
+ALTER USER MICDROP_APP_USER SET
+  MUST_CHANGE_PASSWORD = FALSE
+  DEFAULT_ROLE = MICDROP_APP
+  DEFAULT_WAREHOUSE = MICDROP_WH
+  DEFAULT_NAMESPACE = MICDROP.PUBLIC;
 GRANT ROLE MICDROP_APP TO USER MICDROP_APP_USER;

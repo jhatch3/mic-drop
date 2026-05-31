@@ -1,0 +1,275 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>MIC DROP — Voice Host</title>
+<style>
+  :root { color-scheme: dark; }
+  body { font-family: system-ui, sans-serif; max-width: 640px; margin: 36px auto; padding: 0 16px;
+         background: #0b0617; color: #f7f0ff; }
+  h1 { font-size: 1.3rem; }
+  button { font-size: 1rem; padding: 11px 20px; border-radius: 10px; border: 0; cursor: pointer; font-weight: 600; }
+  #start { background: linear-gradient(100deg,#ff2e97,#b537f2); color: #fff; }
+  #listen { background: #05d9e8; color: #06121a; }
+  #listen.on { background: #e63946; color: #fff; }
+  button:disabled { opacity: .45; cursor: default; }
+  .row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin: 14px 0; }
+  input[type=text] { flex: 1; min-width: 200px; background: #160a2b; color: #f7f0ff; border: 1px solid #3a2168;
+                     border-radius: 8px; padding: 9px 12px; font-size: 1rem; }
+  .pill { background: #160a2b; border: 1px solid #3a2168; color: #f7f0ff; }
+  .status { color: #05d9e8; min-height: 1.3em; margin: 8px 0; font-weight: 600; }
+  .cap { margin: 7px 0; line-height: 1.4; }
+  .cap .host { color: #ff6ec7; } .cap .user { color: #aaff00; }
+  .cap .txt.interim { opacity: .6; font-style: italic; }
+  #caps { min-height: 60px; }
+  #log { background: #120724; border: 1px solid #3a2168; border-radius: 8px; padding: 10px;
+         max-height: 160px; overflow-y: auto; font-size: .8rem; margin-top: 14px; }
+  .muted { color: #b9a7e6; font-size: .85rem; }
+  code { color: #05d9e8; user-select: all; }
+  #help { display:none; background:#3a0d22; border:1px solid #ff2e97; border-radius:8px; padding:12px; margin:12px 0; }
+</style>
+</head>
+<body>
+<h1>🎤 MIC DROP — talk to the host</h1>
+<p class="muted">Click <b>Start</b> to hear the host. When he finishes talking it <b>auto-listens</b> —
+just speak and your words appear on screen, then he replies. <b>Use headphones.</b> Speech-to-text
+uses your browser (Chrome recommended).</p>
+
+<div class="row">
+  <button id="start">▶ Start</button>
+  <button id="listen" class="pill" disabled>🎤 Listen</button>
+  <button id="done" class="pill" style="display:none; background:#e63946; color:#fff;">⏹ Done singing</button>
+  <span class="status" id="status">idle</span>
+</div>
+<p class="muted" id="hint"></p>
+<div id="result" style="display:none; background:#160a2b; border:1px solid #3a2168; border-radius:8px; padding:12px; margin:10px 0;"></div>
+
+<div class="row">
+  <input type="text" id="say" placeholder="…or type to the host" />
+  <button id="send" class="pill">Send</button>
+</div>
+
+<div id="help">
+  <b>🎙 Microphone blocked.</b> Allow it for this site:
+  <ol style="margin:8px 0 0 18px; line-height:1.6;">
+    <li>Open a new tab: <code>chrome://settings/content/siteDetails?site=http%3A%2F%2Flocalhost%3A8000</code></li>
+    <li>Set <b>Microphone → Allow</b> (or <b>Reset permissions</b>), then reload this page.</li>
+  </ol>
+</div>
+
+<div id="caps"></div>
+<div id="log"></div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const setStatus = (t) => ($("status").textContent = t);
+const logLine = (t) => { const d = document.createElement("div"); d.textContent = t; $("log").prepend(d); };
+
+// ── Captions (streaming) ─────────────────────────────────────────────────────
+let liveCap = { host: null, user: null };
+function capLine(role) {
+  const d = document.createElement("div"); d.className = "cap";
+  d.innerHTML = `<span class="${role}">${role === "host" ? "🎙 Host" : "🧑 You"}:</span> <span class="txt"></span>`;
+  $("caps").prepend(d);
+  return d.querySelector(".txt");
+}
+function streamCaption(role, text) {
+  if (!liveCap[role]) liveCap[role] = capLine(role);
+  liveCap[role].classList.remove("interim");
+  liveCap[role].textContent += text;
+}
+function liveUser(text, interim) {           // live STT: replace (not append) the current line
+  if (!liveCap.user) liveCap.user = capLine("user");
+  liveCap.user.textContent = text;
+  liveCap.user.classList.toggle("interim", !!interim);
+}
+function finalize() { liveCap = { host: null, user: null }; }
+
+// ── Audio out: host voice (PCM24) + SFX share one timeline ───────────────────
+let playCtx, nextTime = 0;
+function ensureCtx() {
+  if (!playCtx) playCtx = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 24000 });
+  if (playCtx.state === "suspended") playCtx.resume();
+  return playCtx;
+}
+function playPCM(buf) {
+  const ctx = ensureCtx();
+  const i16 = new Int16Array(buf), f32 = new Float32Array(i16.length);
+  for (let i = 0; i < i16.length; i++) f32[i] = i16[i] / 32768;
+  const ab = ctx.createBuffer(1, f32.length, 24000); ab.copyToChannel(f32, 0);
+  const src = ctx.createBufferSource(); src.buffer = ab; src.connect(ctx.destination);
+  const t = Math.max(ctx.currentTime + 0.02, nextTime); src.start(t); nextTime = t + ab.duration;
+}
+async function playSfx(name, duration = 2) {
+  const ctx = ensureCtx();
+  const start = Math.max(ctx.currentTime + 0.02, nextTime);
+  nextTime = start + Math.max(0.25, duration - 0.45);
+  logLine(`🔊 ${name}`);
+  try {
+    const dec = await ctx.decodeAudioData(await (await fetch(`/sfx-audio/${name}.mp3`)).arrayBuffer());
+    const src = ctx.createBufferSource(); const g = ctx.createGain(); g.gain.value = 0.45;
+    src.buffer = dec; src.connect(g); g.connect(ctx.destination); src.start(start);
+    nextTime = Math.max(nextTime, start + Math.max(0.25, dec.duration - 0.45));
+  } catch {}
+}
+
+// ── WebSocket to the host ────────────────────────────────────────────────────
+let ws;
+function openWS() {
+  const proto = location.protocol === "https:" ? "wss" : "ws";
+  ws = new WebSocket(`${proto}://${location.host}/ws/host`);
+  ws.binaryType = "arraybuffer";
+  ws.onopen = () => { ws.send(JSON.stringify({ type: "mode", autostart: false })); $("listen").disabled = false; setStatus("connecting…"); };
+  ws.onclose = () => { setStatus("disconnected"); stopListening(); $("listen").disabled = true; };
+  ws.onerror = () => setStatus("connection error");
+  ws.onmessage = (ev) => {
+    if (ev.data instanceof ArrayBuffer) { playPCM(ev.data); return; }
+    let m; try { m = JSON.parse(ev.data); } catch { return; }
+    if (m.type === "status") setStatus(m.msg);
+    else if (m.type === "sfx") playSfx(m.name, m.duration);
+    else if (m.type === "game") {
+      logLine(`🎮 ${m.command}`);
+      if (m.command === "start_game") { match = { id: "m-" + Date.now().toString(36), takes: {}, rec: null, chunks: [], cur: null }; $("result").style.display = "none"; }
+      else if (m.command === "start_p1_turn") pendingTake = "p1";   // begins when host finishes talking
+      else if (m.command === "start_p2_turn") pendingTake = "p2";
+      else if (m.command === "end_game") { /* scoring is triggered by Done singing on P2 */ }
+    }
+    else if (m.type === "caption" && m.role === "host") streamCaption("host", m.text);
+    else if (m.type === "turn_complete") { finalize(); afterHostSpoke(); }
+  };
+}
+function sendText(text) {
+  if (ws && ws.readyState === 1) ws.send(JSON.stringify({ type: "text", text }));
+}
+
+// ── Browser speech-to-text (the user's voice → live text) ────────────────────
+const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+let recog = null, listening = false, autoListen = true;
+
+function startListening() {
+  if (!SR) { setStatus("No speech recognition — use Chrome, or type below."); return; }
+  if (listening) return;
+  recog = new SR();
+  recog.lang = "en-US"; recog.interimResults = true; recog.continuous = false;
+  recog.onstart = () => { listening = true; $("listen").classList.add("on"); $("listen").textContent = "■ Listening…"; setStatus("🎙 listening — speak now"); };
+  recog.onresult = (e) => {
+    let interim = "", final = "";
+    for (let i = e.resultIndex; i < e.results.length; i++) {
+      const t = e.results[i][0].transcript;
+      if (e.results[i].isFinal) final += t; else interim += t;
+    }
+    if (interim) liveUser(interim, true);
+    if (final) {
+      liveUser(final, false); finalize();
+      logLine(`🧑 ${final}`);
+      sendText(final);            // → host replies in voice
+      stopListening();            // don't transcribe the host's own reply
+      setStatus("…host is responding");
+    }
+  };
+  recog.onerror = (e) => {
+    logLine("stt error: " + e.error);
+    if (e.error === "not-allowed" || e.error === "service-not-allowed") { $("help").style.display = "block"; setStatus("mic blocked — see the box below"); }
+    else setStatus("stt: " + e.error);
+  };
+  recog.onend = () => { listening = false; $("listen").classList.remove("on"); $("listen").textContent = "🎤 Listen"; };
+  try { recog.start(); } catch (e) { logLine("stt start: " + e.message); }
+}
+function stopListening() { autoListen = false; try { recog && recog.stop(); } catch {} }
+
+// After the host finishes a spoken turn: start a pending singing take if one is armed,
+// otherwise auto-open the mic (STT) so you can reply.
+function afterHostSpoke() {
+  if (pendingTake) { const p = pendingTake; pendingTake = null; beginTake(p); return; }
+  if (autoListen && ws && ws.readyState === 1) setTimeout(startListening, 250);
+}
+
+// ── Real scored match driven by the host's tool calls ───────────────────────
+const SONG_ID = "firework";
+let match = { id: null, takes: {}, rec: null, chunks: [], cur: null };
+let pendingTake = null;
+function recMime() {
+  for (const m of ["audio/webm;codecs=opus", "audio/webm", "audio/mp4"])
+    if (window.MediaRecorder && MediaRecorder.isTypeSupported(m)) return m;
+  return "";
+}
+async function beginTake(player) {
+  stopListening();                                  // don't run STT while singing
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    match.cur = player; match.chunks = [];
+    match.rec = new MediaRecorder(stream, { mimeType: recMime() });
+    match.rec.ondataavailable = (e) => { if (e.data.size) match.chunks.push(e.data); };
+    match.rec.onstop = () => stream.getTracks().forEach((t) => t.stop());
+    match.rec.start(200);
+    $("done").style.display = ""; setStatus(`🔴 ${player.toUpperCase()} — sing now! Click "Done singing" when finished.`);
+    logLine(`🔴 recording ${player}`);
+  } catch (e) {
+    setStatus(`mic error (${e.name})`); if (e.name === "NotAllowedError") $("help").style.display = "block";
+  }
+}
+function endTake() {
+  return new Promise((resolve) => {
+    const rec = match.rec, p = match.cur;
+    if (!rec || rec.state === "inactive") return resolve(null);
+    rec.onstop = () => {
+      match.takes[p] = new Blob(match.chunks, { type: rec.mimeType || "audio/webm" });
+      match.rec = null; logLine(`saved ${p} take (${Math.round(match.takes[p].size / 1024)} KB)`);
+      resolve(p);
+    };
+    rec.stop();
+  });
+}
+$("done").onclick = async () => {
+  $("done").style.display = "none";
+  const p = await endTake();
+  if (p === "p1") { sendText("Player one is finished singing — bring up Player two and start their turn!"); }
+  else if (p === "p2") { await scoreMatch(); }
+};
+async function scoreMatch() {
+  if (!match.takes.p1 || !match.takes.p2) { logLine("missing a take"); return; }
+  setStatus("⏳ scoring both takes (pitch + lyrics)…");
+  const fd = new FormData();
+  fd.append("match_id", match.id || ("m-" + Date.now().toString(36)));
+  fd.append("song_id", SONG_ID);
+  fd.append("p1_pubkey", "VoiceP1"); fd.append("p2_pubkey", "VoiceP2");
+  fd.append("take_p1", match.takes.p1, "p1.webm");
+  fd.append("take_p2", match.takes.p2, "p2.webm");
+  try {
+    const r = await fetch("/api/match/finish", { method: "POST", body: fd });
+    if (!r.ok) throw new Error("HTTP " + r.status);
+    const res = await r.json();
+    const [a, b] = res.scores;
+    $("result").style.display = "";
+    $("result").innerHTML =
+      `<b>🏁 ${res.winner.toUpperCase()} WINS</b><br>` +
+      [a, b].map((s) => `${s.player_id}: <b>${s.score}</b>/100 ` +
+        `(🎵 pitch ${s.pitch_score ?? "—"} · 📝 lyrics ${s.lyrics_score ?? "—"})` +
+        (s.transcript ? `<br><span class="muted">heard: “${s.transcript}”</span>` : "")).join("<br>");
+    logLine(`🏁 P1 ${a.score} / P2 ${b.score} · winner ${res.winner}`);
+    sendText(`The judges' scores are in: Player 1 scored ${a.score} out of 100, Player 2 scored ${b.score}. ` +
+      `The winner is ${res.winner}. Announce the winner with big energy, play the applause sound, then roast the loser.`);
+    setStatus("scored — host is announcing the result");
+  } catch (e) { logLine("scoring failed: " + e.message); setStatus("scoring failed — see log"); }
+}
+
+// ── Controls ─────────────────────────────────────────────────────────────────
+$("start").onclick = () => {
+  if (ws && ws.readyState <= 1) { ws.close(); $("start").textContent = "▶ Start"; return; }
+  ensureCtx(); openWS(); autoListen = true;
+  $("start").textContent = "■ Stop";
+  $("hint").textContent = "Host is greeting you — he'll auto-listen when he's done.";
+};
+$("listen").onclick = () => {
+  if (listening) { autoListen = false; try { recog.stop(); } catch {} }
+  else { autoListen = true; startListening(); }
+};
+$("send").onclick = () => {
+  const t = $("say").value.trim(); if (!t || !ws || ws.readyState !== 1) return;
+  liveUser(t, false); finalize(); logLine(`🧑 ${t}`); sendText(t); $("say").value = "";
+};
+$("say").addEventListener("keydown", (e) => { if (e.key === "Enter") $("send").click(); });
+</script>
+</body>
+</html>

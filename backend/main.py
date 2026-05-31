@@ -16,6 +16,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from ai.router import router as ai_router
+from ai.host_ws import router as host_ws_router
 from data.router import router as data_router
 from dance.router import router as dance_router
 from orchestration.router import router as orchestration_router
@@ -40,6 +41,8 @@ _BACKEND = Path(__file__).parent
 _STATIC = _BACKEND / "static"
 _MC_DIR = _BACKEND / "assets" / "mc"
 _MC_DIR.mkdir(parents=True, exist_ok=True)
+_SFX_DIR = _BACKEND / "assets" / "sfx"
+_SFX_DIR.mkdir(parents=True, exist_ok=True)
 
 
 @app.get("/health")
@@ -57,6 +60,18 @@ def mic_test_page() -> FileResponse:
 def live_page() -> FileResponse:
     """Live mic streaming + real-time pitch viz over /ws/live."""
     return FileResponse(_STATIC / "live.html")
+
+
+@app.get("/mc-test")
+def mc_test_page() -> FileResponse:
+    """AI MC tester: generate a roast (/api/commentary) and voice it (/api/mc-voice)."""
+    return FileResponse(_STATIC / "mc_test.html")
+
+
+@app.get("/host-voice")
+def host_voice_page() -> FileResponse:
+    """Talk to the live voice game-show host over /ws/host."""
+    return FileResponse(_STATIC / "host_voice.html")
 
 
 # /api/*
@@ -80,9 +95,12 @@ except ImportError as e:
 
 # WS
 app.include_router(live_ws_router)  # /ws/live (no /api prefix)
+app.include_router(host_ws_router)  # /ws/host — real-time voice game-show host
 
 # Static: MC audio clips. Served at /mc-audio/<match_id>.mp3 + /mc-audio/fallback.mp3.
 app.mount("/mc-audio", StaticFiles(directory=_MC_DIR), name="mc-audio")
+# Static: cached sound effects. Served at /sfx-audio/<name>.mp3.
+app.mount("/sfx-audio", StaticFiles(directory=_SFX_DIR), name="sfx-audio")
 
 
 @app.on_event("startup")
