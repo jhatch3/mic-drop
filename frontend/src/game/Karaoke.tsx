@@ -40,7 +40,7 @@ interface KaraokeProps {
   /** When provided, the component runs in "turn" mode: finishing the song (or
    *  pressing "Finish turn") fires this with the final score instead of just
    *  stopping playback. Used by the local hot-seat 2-player game. */
-  onFinish?: (result: KaraokeResult) => void;
+  onFinish?: (result: KaraokeResult, take?: Blob) => void;
   /** Auto-start mic + music on mount (no "Sing" click) — used when the AI host
    *  kicks off the turn. */
   autoPlay?: boolean;
@@ -220,6 +220,8 @@ export default function Karaoke({ song = DEFAULT_SONG, playerLabel, onFinish, au
   const ctxRef         = useRef<AudioContext | null>(null);
   const analyserRef    = useRef<AnalyserNode | null>(null);
   const streamRef      = useRef<MediaStream | null>(null);
+  const recRef         = useRef<MediaRecorder | null>(null);   // records the take for backend scoring
+  const recChunksRef   = useRef<Blob[]>([]);
   const hitsRef        = useRef(0), scoredRef = useRef(0);
   const pitchHistRef   = useRef<number[]>([]);   // recent midi for smoothing
   const canvasRef      = useRef<HTMLCanvasElement>(null);
@@ -283,6 +285,14 @@ export default function Karaoke({ song = DEFAULT_SONG, playerLabel, onFinish, au
     const src = ctx.createMediaStreamSource(stream);
     const an = ctx.createAnalyser(); an.fftSize = 2048;
     src.connect(an); analyserRef.current = an;
+    // Record the take so the host can score it on the backend (pitch + lyrics).
+    try {
+      const mime = ["audio/webm;codecs=opus", "audio/webm", "audio/mp4"].find(m => MediaRecorder.isTypeSupported(m)) || "";
+      recChunksRef.current = [];
+      const rec = new MediaRecorder(stream, mime ? { mimeType: mime } : undefined);
+      rec.ondataavailable = (e) => { if (e.data.size) recChunksRef.current.push(e.data); };
+      rec.start(250); recRef.current = rec;
+    } catch { /* recording unsupported → backend scoring falls back to pitch */ }
     setMicOn(true);
   }, []);
 
@@ -327,11 +337,22 @@ export default function Karaoke({ song = DEFAULT_SONG, playerLabel, onFinish, au
     const audio = audioRef.current;
     if (audio) audio.pause();
     setPlaying(false);
-    streamRef.current?.getTracks().forEach(t => t.stop());
     const finalScore = scoredRef.current > 0
       ? Math.round(100 * hitsRef.current / scoredRef.current)
       : 0;
-    onFinish({ score: finalScore, hits: hitsRef.current, scored: scoredRef.current });
+    const local: KaraokeResult = { score: finalScore, hits: hitsRef.current, scored: scoredRef.current };
+    const rec = recRef.current;
+    if (rec && rec.state !== "inactive") {
+      rec.onstop = () => {
+        const take = new Blob(recChunksRef.current, { type: rec.mimeType || "audio/webm" });
+        streamRef.current?.getTracks().forEach(t => t.stop());
+        onFinish(local, take);   // hand the recorded take to the backend scorer
+      };
+      rec.stop();
+    } else {
+      streamRef.current?.getTracks().forEach(t => t.stop());
+      onFinish(local);
+    }
   }, [onFinish]);
 
   const progress = duration > 0 ? (currentTime / duration) * 100 : 0;

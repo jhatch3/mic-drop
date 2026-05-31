@@ -22,6 +22,13 @@ function Captions({ host, you }: { host: string; you: string }) {
 }
 
 const labelCls = "font-display text-[10px] uppercase tracking-widest text-muted-foreground";
+const API_BASE = import.meta.env.VITE_API_BASE ?? "";
+
+interface ScoreRow { player_id: string; score: number; pitch_score?: number; lyrics_score?: number; transcript?: string; }
+interface FinishResponse {
+  scores: ScoreRow[]; winner: "p1" | "p2" | "tie"; commentary: string;
+  mc_audio_url: string; payout_tx: string; leaderboard: Array<{ player: string; wins: number; losses: number }>;
+}
 
 export default function KaraokeHost() {
   const wallet = useWallet();
@@ -31,13 +38,10 @@ export default function KaraokeHost() {
   const { room, phase, currentTurn, log, addLog, createRoom, beginGame, submitScore } = useGameRoom();
   const { busy, createAndStake, settle } = useEscrow(addLog);
 
-  // The laptop is the karaoke station: it runs the real pitch+lyrics for whoever's
-  // turn it is and submits the real score. (Phones never sing.)
-  const handleTurnFinish = useCallback((result: KaraokeResult) => {
-    if (!currentTurn) return;
-    addLog(`${currentTurn.player}: ${result.score}/100`);
-    submitScore(currentTurn.wallet, result.score);
-  }, [currentTurn, addLog, submitScore]);
+  // Recorded takes → scored together on the backend (80% lyrics + 20% pitch).
+  const takesRef = useRef<{ p1?: Blob; p2?: Blob }>({});
+  const [finish, setFinish] = useState<FinishResponse | null>(null);
+  const [scoring, setScoring] = useState(false);
 
   const handleCreateRoom = useCallback(() => {
     if (!wallet.publicKey) return;
@@ -65,6 +69,46 @@ export default function KaraokeHost() {
     if (phase === "waiting") voice.connect(true);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [phase]);
+
+  // After both takes are recorded, score them on the backend (80% lyrics + 20% pitch)
+  // and let the host announce the real result.
+  const finishMatch = useCallback(async () => {
+    const { p1, p2 } = takesRef.current;
+    if (!room || !p1 || !p2) return;
+    setScoring(true);
+    addLog("Scoring both takes (lyrics + pitch)…");
+    const fd = new FormData();
+    fd.append("match_id", room.matchId || room.code);
+    fd.append("song_id", "firework");
+    fd.append("p1_pubkey", room.players[0]?.wallet || "p1");
+    fd.append("p2_pubkey", room.players[1]?.wallet || "p2");
+    fd.append("stake_lamports", String(room.stake ?? 0));
+    fd.append("take_p1", p1, "p1.webm");
+    fd.append("take_p2", p2, "p2.webm");
+    try {
+      const r = await fetch(`${API_BASE}/api/match/finish`, { method: "POST", body: fd });
+      if (!r.ok) throw new Error("HTTP " + r.status);
+      const res: FinishResponse = await r.json();
+      setFinish(res);
+      const s1 = res.scores[0]?.score ?? 0, s2 = res.scores[1]?.score ?? 0;
+      addLog(`Result: ${res.winner.toUpperCase()} — P1 ${s1} / P2 ${s2}`);
+      voice.tell(`The scores are in! Player 1 scored ${s1}, Player 2 scored ${s2}. The winner is ${res.winner}. Announce the winner with big energy, play the applause sound, then roast the loser in one line.`);
+    } catch (e: any) {
+      addLog("scoring failed: " + e.message);
+    }
+    setScoring(false);
+  }, [room, addLog, voice]);
+
+  // Each turn records a take; advance the socket turn state, and once both takes are in,
+  // score on the backend.
+  const handleTurnFinish = useCallback((result: KaraokeResult, take?: Blob) => {
+    if (!currentTurn) return;
+    const key = currentTurn.player === "P1" ? "p1" : "p2";
+    if (take) takesRef.current[key] = take;
+    addLog(`${currentTurn.player} done`);
+    submitScore(currentTurn.wallet, result.score);   // advances p1→p2→finished
+    if (takesRef.current.p1 && takesRef.current.p2) void finishMatch();
+  }, [currentTurn, addLog, submitScore, finishMatch]);
 
   const joinUrl = room ? `${window.location.origin}/play?code=${room.code}` : null;
 
@@ -148,17 +192,42 @@ export default function KaraokeHost() {
 
         {phase === "finished" && room && (
           <CRTCard title="Game Over" className="space-y-4">
-            <NeonHeading as="h2" color="lime" className="text-center text-base">
-              {room.winner ? "WE HAVE A WINNER" : "TIE"}
-            </NeonHeading>
-            <div className="space-y-1">
-              {room.players.map((p) => (
-                <div key={p.wallet} className={`flex items-center justify-between border-b border-border/50 py-1.5 font-mono text-sm ${p.wallet === room.winner ? "text-lime text-glow-sm" : ""}`}>
-                  <span>{p.wallet === room.winner ? "🏆 " : ""}{p.name}</span>
-                  <span className="font-display text-xs">{p.score ?? "—"}/100</span>
+            {scoring && !finish && (
+              <div className="font-display text-center text-sm text-purple text-glow">⏳ Scoring lyrics + pitch…</div>
+            )}
+            {finish ? (
+              <>
+                <NeonHeading as="h2" color="lime" className="text-center text-base">
+                  {finish.winner === "tie" ? "IT'S A TIE" : `${finish.winner.toUpperCase()} WINS`}
+                </NeonHeading>
+                <div className="space-y-3">
+                  {room.players.map((p, i) => {
+                    const s = finish.scores[i];
+                    const win = finish.winner === (i === 0 ? "p1" : "p2");
+                    return (
+                      <div key={p.wallet} className="space-y-1">
+                        <div className="flex items-center justify-between font-mono text-sm">
+                          <span className={win ? "text-lime text-glow-sm" : ""}>{win ? "🏆 " : ""}{p.name}</span>
+                          <span className="font-display text-xs">{s?.score ?? "—"}/100</span>
+                        </div>
+                        <ScoreBar value={s?.score ?? 0} color={win ? "lime" : "magenta"} />
+                        <div className="flex gap-4 font-mono text-[11px] text-muted-foreground">
+                          <span>📝 lyrics {s?.lyrics_score ?? "—"} <span className="opacity-50">(×0.8)</span></span>
+                          <span>🎵 pitch {s?.pitch_score ?? "—"} <span className="opacity-50">(×0.2)</span></span>
+                        </div>
+                        {s?.transcript && <div className="font-mono text-[11px] italic text-muted-foreground/70 break-words">heard: “{s.transcript}”</div>}
+                      </div>
+                    );
+                  })}
                 </div>
-              ))}
-            </div>
+                {finish.commentary && (
+                  <div className="border-l-2 border-magenta pl-3 font-body text-base italic text-foreground/90">“{finish.commentary}”</div>
+                )}
+                <div className="font-mono text-[11px] text-muted-foreground">payout: {finish.payout_tx}</div>
+              </>
+            ) : !scoring && (
+              <div className="font-mono text-sm text-muted-foreground">Waiting for scores…</div>
+            )}
             {room.winner && room.matchId && (
               <NeonButton onClick={() => settle(room.matchId!, room.winner!)} disabled={busy} variant="lime" size="lg" className="w-full">
                 {busy ? "…" : "💸 Pay Winner on Solana"}
