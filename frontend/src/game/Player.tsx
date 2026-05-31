@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useMemo } from "react";
 import { useWallet, useConnection } from "@solana/wallet-adapter-react";
 import { WalletMultiButton } from "@solana/wallet-adapter-react-ui";
 import { AnchorProvider, Program, BN } from "@coral-xyz/anchor";
@@ -30,6 +30,9 @@ export default function Player() {
   const { connection } = useConnection();
   const socket = getSocket();
 
+  // Generate a stable guest ID for this session (no wallet needed)
+  const guestId = useMemo(() => "guest-" + Math.random().toString(36).slice(2, 10), []);
+
   // Pre-fill code from URL ?code=PITCH1
   const urlCode = new URLSearchParams(window.location.search).get("code") ?? "";
   const [code, setCode] = useState(urlCode.toUpperCase());
@@ -55,13 +58,14 @@ export default function Player() {
       addLog("Game started! Get ready.");
     });
     socket.on("turn:start", (t: { player: string; wallet: string }) => {
-      if (wallet.publicKey && t.wallet === wallet.publicKey.toBase58()) {
+      if (t.wallet === guestId) {
         setMyTurn(true);
+        addLog("It's YOUR turn!");
         setTurnDone(false);
         addLog("It's YOUR turn — sing!");
       } else {
         setMyTurn(false);
-        addLog(`${t.player} is singing…`);
+        addLog(`${t.player} is up…`);
       }
     });
     socket.on("game:over", (r: RoomState) => {
@@ -85,7 +89,7 @@ export default function Player() {
     });
 
     return () => { socket.removeAllListeners(); };
-  }, [socket, wallet.publicKey]);
+  }, [socket, guestId]);
 
   const stakeOnChain = useCallback(async () => {
     if (!wallet.publicKey || !wallet.wallet?.adapter || !room?.matchId) return;
@@ -111,13 +115,15 @@ export default function Player() {
   }, [wallet, connection, room, socket]);
 
   const joinRoom = () => {
-    if (!wallet.publicKey || !code) return;
+    if (!code) return;
     setError("");
-    socket.emit("room:join", { code: code.toUpperCase(), wallet: wallet.publicKey.toBase58() });
+    socket.emit("room:join", { code: code.toUpperCase(), wallet: guestId });
     setJoined(true);
     addLog(`Joining room ${code}…`);
   };
 
+  const myInfo = room?.players.find((p) => p.wallet === guestId);
+  const opponentInfo = room?.players.find((p) => p.wallet !== guestId);
   // This device owns the mic for ITS player's turn (per the device model, the
   // singer's own screen runs the karaoke + client-side pitch graph). When done we
   // send only the final score over the socket — no audio ever leaves this device.
@@ -147,18 +153,12 @@ export default function Player() {
         {/* Header */}
         <div style={{ marginBottom: 24 }}>
           <h1 style={styles.title}>🎤 Pitch Battle</h1>
-          <WalletMultiButton />
         </div>
 
         {/* Join form */}
         {!joined && (
           <div style={styles.card}>
             <div style={styles.cardTitle}>Join a Game</div>
-            {!wallet.publicKey && (
-              <div style={{ color: "#9ca3af", fontSize: 13, marginBottom: 12 }}>
-                Connect your wallet first to join.
-              </div>
-            )}
             <label style={styles.label}>Room Code</label>
             <input
               style={styles.input}
@@ -168,7 +168,7 @@ export default function Player() {
               maxLength={6}
             />
             {error && <div style={{ color: "#f87171", fontSize: 13, marginBottom: 8 }}>{error}</div>}
-            <Btn onClick={joinRoom} disabled={!wallet.publicKey || code.length !== 6}>
+            <Btn onClick={joinRoom} disabled={code.length !== 6}>
               Join Game
             </Btn>
           </div>
@@ -237,7 +237,7 @@ export default function Player() {
             <div style={{ marginTop: 20 }}>
               {room.players.map((p) => (
                 <div key={p.wallet} style={styles.playerRow}>
-                  {p.name} {p.wallet === wallet.publicKey?.toBase58() ? "(you)" : ""}:{" "}
+                  {p.name} {p.wallet === guestId ? "(you)" : ""}:{" "}
                   {p.score !== null ? `${p.score}/100` : "—"}
                 </div>
               ))}
@@ -270,7 +270,7 @@ export default function Player() {
             )}
             {finish && room.winner === wallet.publicKey?.toBase58() && (
               <div style={{ color: "#4ade80", fontWeight: 700, fontSize: 18, marginTop: 12, textAlign: "center" }}>
-                🎉 You won! SOL is on its way.
+                🎉 You won!
               </div>
             )}
             {finish?.commentary && (

@@ -6,11 +6,14 @@ import { WalletModalProvider } from "@solana/wallet-adapter-react-ui";
 import { PhantomWalletAdapter } from "@solana/wallet-adapter-phantom";
 import "@solana/wallet-adapter-react-ui/styles.css";
 import App from "./App";
-import Host from "./game/Host";
 import Player from "./game/Player";
 import Karaoke from "./game/Karaoke";
 import { RetroBackground, Scanlines } from "./retro";
 import LocalGame from "./game/LocalGame";
+import KaraokeHost from "./game/KaraokeHost";
+import DanceHost from "./dance/DanceHost";
+import Home from "./pages/Home";
+import CreateLobby from "./pages/CreateLobby";
 
 // Resolve the RPC endpoint with a clear, RUNTIME-overridable precedence so a
 // stale build (or a deploy missing VITE_RPC_URL) can't silently strand us on the
@@ -49,11 +52,14 @@ if (onPublic) {
 
 function Router() {
   const path = window.location.pathname;
-  if (path === "/host") return <Host />;
+  if (path === "/host") return <KaraokeHost />;
   if (path === "/play") return <Player />;
   if (path === "/karaoke") return <Karaoke />;
   if (path === "/local") return <LocalGame />;
-  return <App />;
+  if (path === "/dance-host") return <DanceHost />;
+  if (path === "/create") return <CreateLobby />;
+  if (path === "/test") return <App />;
+  return <Home />;
 }
 
 function Root() {

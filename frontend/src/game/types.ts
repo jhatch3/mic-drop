@@ -12,4 +12,5 @@ export interface RoomState {
   matchId: string | null;
   winner: string | null;
   players: PlayerInfo[];
+  gamemode?: "karaoke" | "dance";
 }
