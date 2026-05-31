@@ -172,3 +172,9 @@ def get_voice() -> VoiceProvider:
         except Exception:
             pass
     return MockVoice()
+
+
+async def tts(text: str, voice: str | None = None, expressive: bool = False) -> bytes | None:
+    """Back-compat shim for orchestration/finish.py: synthesize text -> mp3 bytes
+    via the configured voice provider. Returns None if unavailable."""
+    return await get_voice().synthesize(text, voice=voice, expressive=expressive)
