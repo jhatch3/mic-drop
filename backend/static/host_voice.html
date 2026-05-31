@@ -35,11 +35,13 @@ so he doesn't hear himself. Connects to <code>/ws/host</code> (Gemini Live + Ele
 
 <div class="row">
   <button id="talk">▶ Start show</button>
+  <button id="mic" class="pill" disabled>🎤 Talk to host</button>
   <button id="ready" class="pill" disabled>✅ Ready — start!</button>
   <button id="checkmic" class="pill">🎚 Check mic</button>
   <span class="status" id="status">idle</span>
 </div>
-<p class="muted" id="micstate">🎙 mic: off (turns on when the game starts)</p>
+<p class="muted" id="micstate">🎙 mic: off</p>
+<p class="muted">Hit <b>Talk to host</b> to chat by voice — your words appear live below as you speak.</p>
 
 <div class="row">
   <input type="text" id="say" placeholder="…or type to the host (no mic needed)" />
@@ -126,8 +128,8 @@ function openWS() {
   const proto = location.protocol === "https:" ? "wss" : "ws";
   ws = new WebSocket(`${proto}://${location.host}/ws/host`);
   ws.binaryType = "arraybuffer";
-  ws.onopen = () => { setStatus("connecting host…"); $("ready").disabled = false; };
-  ws.onclose = () => { setStatus("disconnected"); $("ready").disabled = true; stopMic(); };
+  ws.onopen = () => { setStatus("connecting host…"); $("ready").disabled = false; $("mic").disabled = false; };
+  ws.onclose = () => { setStatus("disconnected"); $("ready").disabled = true; $("mic").disabled = true; stopMic(); };
   ws.onerror = () => setStatus("ws error");
   ws.onmessage = (ev) => {
     if (ev.data instanceof ArrayBuffer) { playPCM24(ev.data); return; }
@@ -163,7 +165,22 @@ function downsampleTo16k(f32, inRate) {
   return out;
 }
 let sentChunks = 0, micOn = false;
-const setMicState = (on) => { micOn = on; $("micstate").textContent = on ? "🎙 mic: ON — singing/talking" : "🎙 mic: off (turns on when the game starts)"; };
+const setMicState = (on) => {
+  micOn = on;
+  $("micstate").textContent = on ? "🎙 mic: ON — your voice is live" : "🎙 mic: off";
+  $("mic").textContent = on ? "🔇 Stop talking" : "🎤 Talk to host";
+};
+async function talkToHost() {
+  if (micOn) { stopMic(); setStatus("mic off"); return; }
+  try {
+    await startMic();
+    setStatus("🎙 listening — talk to the host; your words appear below as you speak");
+  } catch (e) {
+    setStatus(`mic error (${e.name})`);
+    logLine(`mic error: ${e.name} — ${e.message}`);
+    if (e.name === "NotAllowedError" || e.name === "SecurityError") $("help").style.display = "block";
+  }
+}
 async function startMic() {
   if (micOn) return;
   micStream = await navigator.mediaDevices.getUserMedia({
@@ -290,6 +307,8 @@ $("ready").onclick = () => {
   streamCaption("user", "Yes, we're ready to start!"); finalizeCaptions();
   setStatus("ready sent — host is starting the game");
 };
+
+$("mic").onclick = () => talkToHost();
 
 async function checkMic() {
   const lines = [];
