@@ -49,6 +49,15 @@ VOICES: dict[str, str] = {
 }
 DEFAULT_VOICE_ROLE = os.getenv("DEFAULT_VOICE_ROLE", "mc")
 
+# Delivery tuning for the live host. Lower stability + higher style = a livelier, more
+# dynamic, "upbeat game-show" read instead of a flat narrator. speed > 1.0 adds pep.
+# All env-overridable so the voice can be dialed in without code changes.
+VOICE_STABILITY = float(os.getenv("VOICE_STABILITY", "0.30"))        # 0 = max variation/energy
+VOICE_SIMILARITY = float(os.getenv("VOICE_SIMILARITY", "0.80"))     # stay on-voice
+VOICE_STYLE = float(os.getenv("VOICE_STYLE", "0.65"))               # 0 = neutral, 1 = very emotive
+VOICE_SPEAKER_BOOST = os.getenv("VOICE_SPEAKER_BOOST", "1") == "1"  # crisper, punchier
+VOICE_SPEED = float(os.getenv("VOICE_SPEED", "1.08"))              # 0.7–1.2; >1 = peppier
+
 # --- Sound effects (ElevenLabs text-to-sound, generate-then-cache) ---
 SFX_MODEL = os.getenv("SFX_MODEL", "eleven_text_to_sound_v2")
 SFX_PROMPT_INFLUENCE = float(os.getenv("SFX_PROMPT_INFLUENCE", "0.5"))

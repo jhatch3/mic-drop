@@ -34,6 +34,34 @@ _TAG_RE = re.compile(r"\[[^\]\n]{1,40}\]")
 _VOICE_POOL = ThreadPoolExecutor(max_workers=4, thread_name_prefix="mc-voice")
 
 
+def _voice_settings():
+    """Build an upbeat, energetic ElevenLabs VoiceSettings from config. Returns None if the
+    SDK doesn't expose VoiceSettings (older versions) so the caller falls back to defaults."""
+    try:
+        from elevenlabs import VoiceSettings
+    except Exception:
+        return None
+    try:
+        return VoiceSettings(
+            stability=config.VOICE_STABILITY,
+            similarity_boost=config.VOICE_SIMILARITY,
+            style=config.VOICE_STYLE,
+            use_speaker_boost=config.VOICE_SPEAKER_BOOST,
+            speed=config.VOICE_SPEED,
+        )
+    except TypeError:
+        # `speed` not supported on this SDK version — retry without it.
+        try:
+            return VoiceSettings(
+                stability=config.VOICE_STABILITY,
+                similarity_boost=config.VOICE_SIMILARITY,
+                style=config.VOICE_STYLE,
+                use_speaker_boost=config.VOICE_SPEAKER_BOOST,
+            )
+        except Exception:
+            return None
+
+
 def strip_audio_tags(text: str) -> str:
     """Remove [emotion] audio tags + tidy whitespace (for non-v3 models)."""
     return re.sub(r"\s{2,}", " ", _TAG_RE.sub("", text)).strip()
@@ -122,6 +150,7 @@ class ElevenLabsVoice:
 
         self._client = ElevenLabs(api_key=config.ELEVENLABS_API_KEY)
         self._fallback = MockVoice()
+        self._settings = _voice_settings()
 
     def _make_gen(self, text: str, voice: str | None, expressive: bool):
         model_id = config.ELEVENLABS_V3_MODEL if expressive else config.ELEVENLABS_MODEL
@@ -131,6 +160,7 @@ class ElevenLabsVoice:
             text=text,
             voice_id=voices.resolve(voice),
             model_id=model_id,
+            voice_settings=self._settings,
         )
 
     def _make_gen_pcm(self, text: str, voice: str | None):
@@ -141,6 +171,7 @@ class ElevenLabsVoice:
             voice_id=voices.resolve(voice),
             model_id=config.ELEVENLABS_MODEL,
             output_format="pcm_24000",
+            voice_settings=self._settings,
         )
 
     async def stream_pcm(self, text: str, voice: str | None = None) -> AsyncIterator[bytes]:
