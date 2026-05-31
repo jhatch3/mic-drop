@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import { useWallet, useConnection } from "@solana/wallet-adapter-react";
 import { WalletMultiButton } from "@solana/wallet-adapter-react-ui";
 import { AnchorProvider, Program, BN } from "@coral-xyz/anchor";
-import { PublicKey, LAMPORTS_PER_SOL, SystemProgram } from "@solana/web3.js";
+import { Keypair, PublicKey, LAMPORTS_PER_SOL, SystemProgram } from "@solana/web3.js";
 import QRCode from "react-qr-code";
 import { getSocket } from "./socket";
 import type { RoomState } from "./types";
@@ -12,14 +12,29 @@ import IDL from "../idl/pitch_battle.json";
 // ─── Static config ────────────────────────────────────────────────────────────
 const DEFAULT_PROGRAM_ID  = "2eMwChdNVoxeoWjdaiTuBGasDiHCKN3jbw7dL5eSyuZf";
 const DEFAULT_TREASURY    = "2KnfMtidoDSVYxJDBNEK1e77rVQijvJ71zkBgz6kwejm";
-const DEFAULT_ORACLE      = "LopSRaD97SqvgpjvQ9aA1BdWpp6mKWhH3zWid4xNLEk";
 const FEE_BPS             = 100;  // 1%
 
 const API_BASE = import.meta.env.VITE_API_BASE ?? "";
 
-// Fallback oracle info used when backend is unreachable
+// Persist a Keypair in localStorage so page reloads reuse the same key.
+// The oracle keypair shares the same storage key as App.tsx so both UIs use
+// the same oracle identity — fund it once and both flows work.
+function persistedKeypair(storageKey: string): Keypair {
+  try {
+    const saved = localStorage.getItem(storageKey);
+    if (saved) return Keypair.fromSecretKey(Uint8Array.from(JSON.parse(saved)));
+  } catch { /* fall through */ }
+  const kp = Keypair.generate();
+  localStorage.setItem(storageKey, JSON.stringify(Array.from(kp.secretKey)));
+  return kp;
+}
+// The oracle that signs settle() — must match the pubkey passed to createMatch.
+const localOracle = persistedKeypair("pb_oracle_keypair");
+
+// Fallback oracle info used when backend is unreachable.
+// Uses localOracle so the frontend can settle without a backend.
 const FALLBACK_ORACLE: OracleInfo = {
-  oracle_pubkey:   DEFAULT_ORACLE,
+  oracle_pubkey:   localOracle.publicKey.toBase58(),
   program_id:      DEFAULT_PROGRAM_ID,
   treasury_pubkey: DEFAULT_TREASURY,
   escrow_mode:     "devnet",
@@ -33,7 +48,7 @@ const FALLBACK_SONGS: Song[] = [
 
 
 // ─── Types ───────────────────────────────────────────────────────────────────
-type HostPhase = "lobby" | "waiting" | "gaming" | "scoring" | "finished";
+type HostPhase = "lobby" | "waiting" | "gaming" | "handoff" | "scoring" | "finished";
 
 interface OracleInfo {
   oracle_pubkey: string;
@@ -124,6 +139,7 @@ export default function Host() {
   const [currentTurn, setCurrentTurn] = useState<{ player: string; wallet: string } | null>(null);
   const [singer, setSinger] = useState<"p1" | "p2">("p1");
   const [p1Score, setP1Score] = useState<KaraokeResult | null>(null);
+  const [p2Score, setP2Score] = useState<KaraokeResult | null>(null);
   const [finish, setFinish] = useState<FinishResponse | null>(null);
   const [waitingForP2Stake, setWaitingForP2Stake] = useState(false);
 
@@ -245,7 +261,9 @@ export default function Host() {
 
       const programId = new PublicKey(oracle.program_id);
       const treasury  = new PublicKey(oracle.treasury_pubkey);
-      const oraclePk  = new PublicKey(oracle.oracle_pubkey);
+      // Always use the locally persisted oracle keypair so the frontend can
+      // settle directly without a backend after the match.
+      const oraclePk  = localOracle.publicKey;
       const program = getProgram();
       const matchId = room.code;
       matchIdRef.current = matchId;
@@ -405,6 +423,68 @@ export default function Host() {
     }
   }, [room, selectedSongId, socket]);
 
+  // Settle the on-chain escrow using the local oracle keypair and the
+  // client-side karaoke scores. Higher score wins; ties go to P1.
+  const settleOnChain = useCallback(async (p1r: KaraokeResult, p2r: KaraokeResult) => {
+    if (!room || !oracle) return;
+    setPhase("scoring");
+    const p1Wins = p1r.score >= p2r.score;
+    const winnerWalletStr = p1Wins ? room.players[0]?.wallet : room.players[1]?.wallet;
+    if (!winnerWalletStr) { addLog("No winner wallet — can't settle"); return; }
+    const winnerPubkey = new PublicKey(winnerWalletStr);
+    const label = p1Wins ? "P1" : "P2";
+    addLog(`Settling on-chain — ${label} wins (${p1r.score} vs ${p2r.score})…`);
+    let payout_tx = "(settle failed)";
+    let commentary = "";
+    try {
+      const programId = new PublicKey(oracle.program_id);
+      const treasury  = new PublicKey(oracle.treasury_pubkey);
+      const program   = getProgram();
+      const matchId   = matchIdRef.current ?? room.code;
+      const mPda      = matchPda(matchId, programId);
+      const vPda      = vaultPda(matchId, programId);
+      const sig = await program.methods
+        .settle(matchId, winnerPubkey)
+        .accounts({
+          oracle: localOracle.publicKey,
+          matchAccount: mPda,
+          vault: vPda,
+          winnerAccount: winnerPubkey,
+          treasury,
+          systemProgram: SystemProgram.programId,
+        })
+        .signers([localOracle])
+        .rpc();
+      payout_tx = sig;
+      addLog(`✅ Settled! ${label} wins. tx=${sig.slice(0, 12)}…`);
+      const margin = Math.abs(p1r.score - p2r.score);
+      commentary = margin === 0
+        ? "A dead tie — sing it again!"
+        : margin <= 5
+          ? `${label} squeaks it out by a hair.`
+          : margin <= 20
+            ? `${label} takes the win. Respectable battle.`
+            : `${label} absolutely bodied that. Game over.`;
+    } catch (e: any) {
+      console.error("[settleOnChain]", e);
+      addLog(`❌ Settle failed: ${errDetail(e)}`);
+      commentary = `${label} wins on points (${p1r.score} vs ${p2r.score}) — settle failed, check oracle balance.`;
+    }
+    setFinish({
+      scores: [
+        { song_id: selectedSongId, player_id: "p1", score: p1r.score, frames_scored: p1r.scored, frames_hit: p1r.hits },
+        { song_id: selectedSongId, player_id: "p2", score: p2r.score, frames_scored: p2r.scored, frames_hit: p2r.hits },
+      ],
+      winner: p1Wins ? "p1" : "p2",
+      commentary,
+      mc_audio_url: "",
+      payout_tx,
+      leaderboard: [],
+    });
+    socket.emit("match:finished", { code: room.code, winner: p1Wins ? "p1" : "p2" });
+    setPhase("finished");
+  }, [room, oracle, getProgram, selectedSongId, socket]);
+
   const joinUrl = room ? `${window.location.origin}/play?code=${room.code}` : null;
   const winnerWallet =
     finish?.winner === "p1" ? room?.players[0].wallet
@@ -515,6 +595,27 @@ export default function Host() {
           </div>
         )}
 
+        {/* Handoff — P1 done, pass to P2 */}
+        {phase === "handoff" && room && p1Score && (
+          <div style={styles.card}>
+            <div style={styles.cardTitle}>Round 1 complete!</div>
+            <div style={{ textAlign: "center", padding: "16px 0" }}>
+              <div style={{ color: "#6b7280", fontSize: 13 }}>P1 scored</div>
+              <div style={{
+                fontSize: 72, fontWeight: 900, lineHeight: 1,
+                color: p1Score.score >= 80 ? "#4ade80" : p1Score.score >= 50 ? "#facc15" : "#f87171",
+              }}>{p1Score.score}</div>
+              <div style={{ color: "#374151", fontSize: 12, marginTop: 4 }}>{p1Score.hits} / {p1Score.scored} frames hit</div>
+            </div>
+            <div style={{ color: "#9ca3af", fontSize: 14, textAlign: "center", margin: "8px 0 20px" }}>
+              🎤 Pass the laptop to <b style={{ color: "#fff" }}>P2</b> — same song!
+            </div>
+            <Btn onClick={() => setPhase("gaming")} busy={false} color="#8b5cf6">
+              P2&apos;s turn →
+            </Btn>
+          </div>
+        )}
+
         {/* Gaming — full karaoke screen, one turn at a time */}
         {phase === "gaming" && room && (
           <div>
@@ -541,13 +642,14 @@ export default function Host() {
                 if (singer === "p1") {
                   setP1Score(result);
                   setSinger("p2");
+                  setPhase("handoff");
                   socket.emit("score:submit", { code: room.code, wallet: room.players[0].wallet, score: result.score });
-                  addLog(`P1 done — score: ${result.score}/100. P2's turn!`);
+                  addLog(`P1 done — score: ${result.score}/100. Pass to P2!`);
                 } else {
+                  setP2Score(result);
                   socket.emit("score:submit", { code: room.code, wallet: room.players[1]?.wallet, score: result.score });
-                  addLog(`P2 done — score: ${result.score}/100. Scoring…`);
-                  setPhase("scoring");
-                  void finishMatch();
+                  addLog(`P2 done — score: ${result.score}/100. Settling…`);
+                  void settleOnChain(p1Score!, result);
                 }
               }}
             />
