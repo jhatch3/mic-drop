@@ -121,7 +121,15 @@ $("talk").onclick = async () => {
     await startMic();
     talking = true; $("talk").classList.add("live"); $("talk").textContent = "■ Stop";
     setStatus("listening — talk to the host");
-  } catch (e) { setStatus("mic error: " + e.message); }
+  } catch (e) {
+    const hints = {
+      NotAllowedError: "mic blocked — click the 🔒/camera icon in the address bar → allow Microphone, AND macOS System Settings → Privacy & Security → Microphone → enable your browser. Then reload.",
+      NotFoundError: "no microphone found — plug one in / check input device.",
+      SecurityError: "not a secure context — open this page as http://localhost:8000/host-voice (not an IP or file://).",
+    };
+    setStatus(`mic error (${e.name}): ${hints[e.name] || e.message}`);
+    logLine(`mic error: ${e.name} — ${e.message}`);
+  }
 };
 
 $("greet").onclick = () => { if (!ws || ws.readyState > 1) openWS(); setTimeout(() => ws.send(JSON.stringify({ type: "greet" })), 300); };

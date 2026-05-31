@@ -16,6 +16,11 @@ from . import config
 
 # name -> (prompt, duration_seconds). The MC's standard cue palette.
 CATALOG: dict[str, tuple[str, float]] = {
+    "game_show_open": (
+        "energetic classic TV game show opening theme fanfare, bright triumphant brass "
+        "stabs with sparkly synth and a driving beat, exciting showtime intro",
+        5.0,
+    ),
     "airhorn": ("celebratory air horn blast, short and punchy", 1.5),
     "drumroll": ("snare drum roll building to a cymbal crash", 3.0),
     "applause": ("enthusiastic crowd cheering and applause", 3.0),

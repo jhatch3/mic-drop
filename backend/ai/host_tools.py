@@ -30,7 +30,7 @@ DECLARATIONS = [
             type="OBJECT",
             properties={"name": types.Schema(
                 type="STRING",
-                description="One of: airhorn, drumroll, applause, sad_trombone, ding, buzzer, suspense, record_scratch",
+                description="One of: game_show_open, airhorn, drumroll, applause, sad_trombone, ding, buzzer, suspense, record_scratch",
             )},
             required=["name"],
         ),
