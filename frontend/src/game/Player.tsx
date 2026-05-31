@@ -135,9 +135,6 @@ export default function Player() {
     addLog(`You scored ${result.score}/100 — waiting for the result…`);
   }, [room, wallet.publicKey, socket]);
 
-  const myInfo = room?.players.find((p) => p.wallet === wallet.publicKey?.toBase58());
-  const opponentInfo = room?.players.find((p) => p.wallet !== wallet.publicKey?.toBase58());
-
   // It's this player's turn to sing → take over the whole screen with the karaoke
   // station. Highest pitch accuracy wins; the laptop settles the wager on-chain.
   if (
