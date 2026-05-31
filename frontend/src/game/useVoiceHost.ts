@@ -19,6 +19,9 @@ export function useVoiceHost(opts: {
   onTurnComplete?: () => boolean | void;
   /** "karaoke" (default) or "dance" — tells the backend which game the host is hosting. */
   gamemode?: string;
+  /** Fires with each host caption phrase AT the moment he speaks it (audio-timed). Used to
+   *  drive the score reveal off his spoken "Three. Two. One!" count. */
+  onHostCaption?: (text: string) => void;
 }) {
   const wsRef = useRef<WebSocket | null>(null);
   const playRef = useRef<AudioContext | null>(null);
@@ -42,6 +45,8 @@ export function useVoiceHost(opts: {
   onCommandRef.current = opts.onCommand;
   const onTurnCompleteRef = useRef(opts.onTurnComplete);
   onTurnCompleteRef.current = opts.onTurnComplete;
+  const onHostCaptionRef = useRef(opts.onHostCaption);
+  onHostCaptionRef.current = opts.onHostCaption;
 
   // ── host audio + SFX (shared timeline so they never overlap) ──
   const ensureCtx = () => {
@@ -245,15 +250,18 @@ export function useVoiceHost(opts: {
         else void playSfx(m.name, m.duration);
       }
       else if (m.type === "game") {
-        // Fire the game command (e.g. reveal_scores) WHEN the host's voice reaches it, so the
-        // 3-2-1 reveal lands exactly as he says it instead of early/late.
+        // Fire the game command WHEN the host's voice reaches it.
         const cmd = m.command;
         if (typeof m.at_ms === "number") atAudio(m.at_ms, () => onCommandRef.current(cmd));
         else onCommandRef.current(cmd);
       }
       else if (m.type === "caption_cues") {
-        // Phrase captions timed across the audio, so the words advance with the voice.
-        for (const c of (m.cues || [])) atAudio(c.offset_ms || 0, () => setHostCaption(c.text));
+        // Phrase captions timed across the audio, so words advance with the voice. Each fire
+        // also notifies the page (onHostCaption) so it can reveal scores on his spoken "One".
+        for (const c of (m.cues || [])) atAudio(c.offset_ms || 0, () => {
+          setHostCaption(c.text);
+          onHostCaptionRef.current?.(c.text);
+        });
       }
       else if (m.type === "turn_complete") {
         // Host finished a spoken turn → clear the caption only after his audio has fully

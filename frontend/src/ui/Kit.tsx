@@ -1,7 +1,32 @@
 // MIC DROP "Broadcast" kit — the chunky retro primitives.
 // Ported from the design handoff (prototype/ds.jsx) to TS + React.
+import { useMemo } from "react";
 import type { CSSProperties, ReactNode } from "react";
 import { PAL, FONT, bevelFace, bevelPanel } from "./theme";
+
+// Full-screen confetti burst (no deps). Mount it to fire; pieces fall once and settle.
+export function Confetti({ count = 90 }: { count?: number }) {
+  const colors = [PAL.slime, PAL.magenta, PAL.cyan, PAL.yellow, PAL.orange, PAL.purple];
+  const pieces = useMemo(() => Array.from({ length: count }).map((_, i) => ({
+    left: Math.random() * 100,
+    delay: Math.random() * 0.5,
+    dur: 2.4 + Math.random() * 1.8,
+    color: colors[i % colors.length],
+    w: 7 + Math.random() * 9,
+    rot: Math.random() * 360,
+  })), [count]);   // eslint-disable-line react-hooks/exhaustive-deps
+  return (
+    <div style={{ position: "fixed", inset: 0, pointerEvents: "none", zIndex: 60, overflow: "hidden" }}>
+      {pieces.map((p, i) => (
+        <span key={i} style={{
+          position: "absolute", top: "-8%", left: `${p.left}%`, width: p.w, height: p.w * 0.5,
+          background: p.color, border: `1px solid ${PAL.ink}`, transform: `rotate(${p.rot}deg)`,
+          animation: `mdConfetti ${p.dur}s linear ${p.delay}s forwards`,
+        }} />
+      ))}
+    </div>
+  );
+}
 
 // ── Chevron run "»»" ──────────────────────────────────────────────
 export function Chevrons({ color = PAL.ink, size = 16, n = 2, style = {} }: {

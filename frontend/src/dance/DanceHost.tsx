@@ -8,13 +8,16 @@ import { useEscrow } from "../services/useEscrow";
 import { useDance } from "../services/useDance";
 import { useVoiceHost } from "../game/useVoiceHost";
 import PoseOverlay from "./PoseOverlay";
-import { PAL, FONT, BevelBtn, Panel, Splat, OnAirBar, StageBG, LowerThird, ScoreBug, Nameplate } from "@/ui";
+import { PAL, FONT, BevelBtn, Panel, Splat, Confetti, OnAirBar, StageBG, LowerThird, ScoreBug, Nameplate } from "@/ui";
 
 const DEMO_SONG_ID = "rasputin";
 const VIDEO_W = 640;
 const VIDEO_H = 480;
 
 const API_BASE = import.meta.env.VITE_API_BASE ?? "";
+
+// Epic victory fanfare, fired when the confetti shoots on the reveal.
+const playVictory = () => { try { const a = new Audio(`${API_BASE}/api/sfx/victory`); a.volume = 0.9; void a.play().catch(() => {}); } catch { /* */ } };
 
 const kicker = (c: string): CSSProperties => ({ fontFamily: FONT.display, fontSize: "clamp(20px,4vw,30px)", letterSpacing: 4, color: c, textShadow: `2px 2px 0 ${PAL.ink}` });
 
@@ -83,6 +86,10 @@ export default function DanceHost() {
   const [scoresShown, setScoresShown] = useState(false);
   const scoresShownRef = useRef(false);
   scoresShownRef.current = scoresShown;
+  const finishRef = useRef<FinishResponse | null>(null);
+  finishRef.current = finish;
+  const revealNowRef = useRef<() => void>(() => {});
+  const revealDriverRef = useRef<(t: string) => void>(() => {});
 
   // A start_*_turn tool call doesn't start the turn immediately — it would talk over the
   // music. We stash which turn to start, then launch a 3-2-1 countdown only AFTER the host
@@ -91,7 +98,7 @@ export default function DanceHost() {
   const fallbackTimerRef = useRef<any>(null);            // ensures the round starts if turn_complete is odd
   const [countdown, setCountdown] = useState<number | null>(null);
   const [revealCountdown, setRevealCountdown] = useState<number | null>(null);   // "THE WINNER IS… 3-2-1"
-  const startRevealRef = useRef<() => void>(() => {});
+  const [confetti, setConfetti] = useState(false);   // 🎉 burst on the winner reveal
 
   // "keep talking while scoring" state.
   const scoringRef = useRef(false);                      // backend is still tallying the result
@@ -103,13 +110,8 @@ export default function DanceHost() {
   const dance = useDance(DEMO_SONG_ID, () => onSongEndRef.current());
 
   const voice = useVoiceHost({
+    onHostCaption: (t) => revealDriverRef.current(t),   // reveal scores off his spoken count
     onCommand: (cmd) => {
-      if (cmd === "reveal_scores") {
-        // Fire the reveal the moment he calls it. The filler was just flushed, so his announce
-        // is only ~1s in (saying "the winner is"), which lines up with the 3-2-1 overlay.
-        startRevealRef.current();
-        return;
-      }
       const which = cmd === "start_game" || cmd === "start_p1_turn" ? "p1"
         : cmd === "start_p2_turn" ? "p2" : null;
       if (!which) return;   // end_game: scoring runs automatically once P2's take is in
@@ -155,6 +157,7 @@ export default function DanceHost() {
     // Warm the scoring music bed now (first generation takes a few seconds) so it's cached
     // and ready the instant we reach the scoring screen.
     fetch(`${API_BASE}/api/sfx/scoring_music`).catch(() => {});
+    fetch(`${API_BASE}/api/sfx/victory`).catch(() => {});   // pre-warm the victory fanfare
   }, [voice]);
 
   // Host called start_p1_turn (after hearing "ready") → begin the match and put P1 on the
@@ -198,21 +201,23 @@ export default function DanceHost() {
     }, 1000);
   };
 
-  // "THE WINNER IS… 3-2-1" then the scoreboard loads. Fired by the host's reveal_scores tool.
-  startRevealRef.current = () => {
-    if (scoresShownRef.current || revealCountdown !== null) return;
-    let n = 3;
-    setRevealCountdown(n);
-    const id = setInterval(() => {
-      n -= 1;
-      if (n <= 0) {
-        clearInterval(id);
-        setRevealCountdown(null);
-        setScoresShown(true);
-      } else {
-        setRevealCountdown(n);
-      }
-    }, 1000);
+  // Load the scoreboard + confetti + victory fanfare (the "one" moment).
+  revealNowRef.current = () => {
+    if (scoresShownRef.current) return;
+    setRevealCountdown(null);
+    setScoresShown(true);
+    setConfetti(true);
+    playVictory();
+    setTimeout(() => setConfetti(false), 5000);
+  };
+  // The big 3-2-1 overlay + reveal are driven by the host's OWN spoken count (captions are
+  // audio-timed), so the numbers and the scoreboard land exactly on his voice.
+  revealDriverRef.current = (text: string) => {
+    if (!finishRef.current || scoresShownRef.current) return;   // only during the reveal window
+    const s = text.toLowerCase();
+    if (/\bone\b|(^|\D)1(\D|$)/.test(s)) { setRevealCountdown(1); setTimeout(() => revealNowRef.current(), 550); }
+    else if (/\btwo\b|(^|\D)2(\D|$)/.test(s)) setRevealCountdown(2);
+    else if (/\bthree\b|(^|\D)3(\D|$)/.test(s)) setRevealCountdown(3);
   };
 
   const tellFiller = useCallback(() => {
@@ -265,13 +270,13 @@ export default function DanceHost() {
       setFinish(res);
       const winnerName = res.winner === "tie" ? "it's a TIE" : `Player ${res.winner === "p1" ? "1" : "2"}`;
       voice.tell(
-        `The scores are in (P1 ${s1}, P2 ${s2}; players can't see them yet). Keep it SHORT and snappy, about `
-        + `6 seconds total: say "the winner is" then count "three, two, one!" and CALL reveal_scores right as you `
-        + `start counting. Then in ONE line announce that ${winnerName} WINS, and ONE line roasting the loser's `
-        + `dance moves. The scoreboard shows the numbers, so do NOT read them all out. Do not ramble.`
+        `The scores are in (P1 ${s1}, P2 ${s2}; players can't see them yet). One short suspense line, then `
+        + `count down as three separate beats: "Three." "Two." "One!" Then in ONE line announce ${winnerName} `
+        + `WINS and ONE line roasting the loser's dance moves. The scoreboard pops up on its own when you say `
+        + `"One" — do NOT read the numbers out.`
       );
-      // Safety net: if the host never calls reveal_scores, reveal anyway so we don't hang.
-      setTimeout(() => { if (!scoresShownRef.current && revealCountdown === null) startRevealRef.current(); }, 14000);
+      // Safety net: if the host never counts, reveal anyway so we don't hang.
+      setTimeout(() => revealNowRef.current(), 16000);
     } catch (e: any) {
       scoringRef.current = false;
       setScoring(false);
@@ -547,6 +552,7 @@ export default function DanceHost() {
           action={<BevelBtn color={PAL.orange} onClick={() => window.location.reload()}>REMATCH »</BevelBtn>} />
       )}
 
+      {confetti && <Confetti />}
       <Captions host={voice.hostCaption} you={voice.youCaption} />
     </div>
   );

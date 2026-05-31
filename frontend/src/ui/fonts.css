@@ -14,6 +14,8 @@ img, svg, canvas { max-width: 100%; }
 
 /* Blinking intentionally disabled — static instead (no flashing anywhere). */
 .md-blink { animation: none; }
+
+@keyframes mdConfetti { 0% { top: -8%; opacity: 1; } 100% { top: 110%; opacity: 0.9; } }
 .md-spin  { animation: mdSpin 14s linear infinite; }
 .md-eq    { transform-origin: bottom; animation: mdEq 0.7s ease-in-out infinite; }
 
