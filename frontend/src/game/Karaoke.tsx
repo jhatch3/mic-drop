@@ -43,8 +43,24 @@ interface KaraokeProps {
   onFinish?: (result: KaraokeResult) => void;
 }
 
-const SR = 44100, FMIN = 65, FMAX = 1000, RMS_GATE = 0.002, CONF_MIN = 0.4;
+const SR = 44100, FMIN = 65, FMAX = 1000, RMS_GATE = 0.006, CONF_MIN = 0.5;
 const HIT_CENTS = 75; // widened from 50 → easier
+const SMOOTH_WINDOW = 6;  // frames of median smoothing to dampen jitter
+
+// Median smoother with octave-jump correction. Autocorrelation pitch detection
+// jumps around (especially by whole octaves); pulling each reading toward the
+// recent value and taking the median kills the flicker without much lag.
+function smoothPitch(hist: number[], raw: number): number {
+  if (hist.length) {
+    const ref = hist[hist.length - 1];
+    while (raw - ref > 7) raw -= 12;   // jumped up an octave → pull down
+    while (ref - raw > 7) raw += 12;   // jumped down an octave → pull up
+  }
+  hist.push(raw);
+  if (hist.length > SMOOTH_WINDOW) hist.shift();
+  const sorted = [...hist].sort((a, b) => a - b);
+  return sorted[Math.floor(sorted.length / 2)];
+}
 const NOTE_NAMES = ["C","C#","D","D#","E","F","F#","G","G#","A","A#","B"];
 function noteFromMidi(midi: number) {
   const n = Math.round(midi);
@@ -170,6 +186,7 @@ export default function Karaoke({ song = DEFAULT_SONG, playerLabel, onFinish }: 
   const analyserRef    = useRef<AnalyserNode | null>(null);
   const streamRef      = useRef<MediaStream | null>(null);
   const hitsRef        = useRef(0), scoredRef = useRef(0);
+  const pitchHistRef   = useRef<number[]>([]);   // recent midi for smoothing
   const canvasRef      = useRef<HTMLCanvasElement>(null);
   const graphRef       = useRef<{ t: number; target: number | null; singer: number | null }[]>([]);
 
@@ -188,7 +205,11 @@ export default function Karaoke({ song = DEFAULT_SONG, playerLabel, onFinish }: 
     if (analyserRef.current && contour.length > 0) {
       const buf = new Float32Array(analyserRef.current.fftSize);
       analyserRef.current.getFloatTimeDomainData(buf);
-      const { midi, conf } = detectPitch(buf);
+      const { midi: raw, conf } = detectPitch(buf);
+      // Dampen: smooth voiced readings; reset history on silence so it doesn't lag.
+      let midi: number | null = null;
+      if (raw != null) midi = smoothPitch(pitchHistRef.current, raw);
+      else pitchHistRef.current.length = 0;
       setLiveMidi(midi);
       const target = contour.find(f => f.voiced && f.midi !== null && Math.abs(f.t - t) <= 0.03) ?? null;
       setTargetMidi(target?.midi ?? null);
