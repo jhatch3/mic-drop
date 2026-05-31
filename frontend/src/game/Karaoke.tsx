@@ -49,7 +49,8 @@ interface KaraokeProps {
 
 const SR = 44100, FMIN = 65, FMAX = 1000, RMS_GATE = 0.006, CONF_MIN = 0.5;
 const HIT_CENTS = 75; // widened from 50 → easier
-const SMOOTH_WINDOW = 6;  // frames of median smoothing to dampen jitter
+const SMOOTH_WINDOW = 9;  // frames of median smoothing to dampen jitter (wider = steadier)
+const PITCH_EMA = 0.22;   // EMA glide on the median: lower = smoother (slightly more lag)
 
 // Median smoother with octave-jump correction. Autocorrelation pitch detection
 // jumps around (especially by whole octaves); pulling each reading toward the
@@ -223,7 +224,8 @@ export default function Karaoke({ song = DEFAULT_SONG, playerLabel, onFinish, au
   const recRef         = useRef<MediaRecorder | null>(null);   // records the take for backend scoring
   const recChunksRef   = useRef<Blob[]>([]);
   const hitsRef        = useRef(0), scoredRef = useRef(0);
-  const pitchHistRef   = useRef<number[]>([]);   // recent midi for smoothing
+  const pitchHistRef   = useRef<number[]>([]);   // recent midi for median smoothing
+  const pitchEmaRef    = useRef<number | null>(null);   // EMA glide on top of the median
   const canvasRef      = useRef<HTMLCanvasElement>(null);
   const graphRef       = useRef<{ t: number; target: number | null; singer: number | null }[]>([]);
 
@@ -243,10 +245,17 @@ export default function Karaoke({ song = DEFAULT_SONG, playerLabel, onFinish, au
       const buf = new Float32Array(analyserRef.current.fftSize);
       analyserRef.current.getFloatTimeDomainData(buf);
       const { midi: raw, conf } = detectPitch(buf);
-      // Dampen: smooth voiced readings; reset history on silence so it doesn't lag.
+      // Dampen hard: median (kills octave flicker) + an EMA glide on top (kills the small
+      // frame-to-frame jitter). Reset both on silence so the next note doesn't lag/glide in.
       let midi: number | null = null;
-      if (raw != null) midi = smoothPitch(pitchHistRef.current, raw);
-      else pitchHistRef.current.length = 0;
+      if (raw != null) {
+        const med = smoothPitch(pitchHistRef.current, raw);
+        pitchEmaRef.current = pitchEmaRef.current == null ? med : pitchEmaRef.current + PITCH_EMA * (med - pitchEmaRef.current);
+        midi = pitchEmaRef.current;
+      } else {
+        pitchHistRef.current.length = 0;
+        pitchEmaRef.current = null;
+      }
       setLiveMidi(midi);
       const target = contour.find(f => f.voiced && f.midi !== null && Math.abs(f.t - t) <= 0.03) ?? null;
       setTargetMidi(target?.midi ?? null);
@@ -495,6 +504,12 @@ export default function Karaoke({ song = DEFAULT_SONG, playerLabel, onFinish, au
                 Pitch Meter
               </div>
             )}
+          </div>
+
+          {/* Live lyric caption — what to sing RIGHT NOW, directly under the pitch meter */}
+          <div style={{ ...bevelPanel(PAL.ink, { bw: 3, shadow: 4 }), color: PAL.white, padding: "10px 12px", minHeight: 48, display: "flex", alignItems: "center", gap: 10, justifyContent: "center", flexWrap: "wrap" }}>
+            <span style={{ background: PAL.magenta, color: PAL.white, fontFamily: FONT.display, fontSize: 12, letterSpacing: 1, padding: "2px 8px", flexShrink: 0 }}>♪ SING</span>
+            <span style={{ fontFamily: FONT.body, fontWeight: 800, fontSize: "clamp(15px,2.4vw,20px)", lineHeight: 1.15 }}>{captionHeadline}</span>
           </div>
 
           {/* Live score — slime bevel panel */}

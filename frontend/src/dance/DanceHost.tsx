@@ -92,6 +92,7 @@ export default function DanceHost() {
   finishRef.current = finish;
   const revealNowRef = useRef<() => void>(() => {});
   const revealDriverRef = useRef<(t: string) => void>(() => {});
+  const countStartedRef = useRef(false);   // saw "three"/"two" — so a stray "one" can't reveal early
 
   // A start_*_turn tool call doesn't start the turn immediately — it would talk over the
   // music. We stash which turn to start, then launch a 3-2-1 countdown only AFTER the host
@@ -113,6 +114,7 @@ export default function DanceHost() {
 
   const voice = useVoiceHost({
     onHostCaption: (t) => revealDriverRef.current(t),   // reveal scores off his spoken count
+    allowSfx: () => !singingRef.current,                // no SFX while a player is dancing
     onCommand: (cmd) => {
       // Guard by game state so a stray/early tool call can't jump turns: P1 only before any
       // turn; P2 only once P1 is done and we're waiting on P2.
@@ -146,12 +148,13 @@ export default function DanceHost() {
         setTimeout(() => startCountdownRef.current(which), voice.remainingAudioMs() + 200);
         return true;
       }
-      // 2) Scores still loading → keep him talking with the next stall prompt (suppress mic),
-      //    so the scoring screen never goes silent until the result lands.
+      // 2) Scores still loading → keep him talking with the next stall prompt (suppress mic).
       if (scoringRef.current) { tellFillerRef.current(); return true; }
-      // 3) Result is on screen (host already revealed it) → stay quiet, don't reopen the mic.
-      if (scoresShownRef.current) return true;
-      return false;   // otherwise open the mic for your reply
+      // 3) Mic ONLY opens in a "ready?" window: pre-game (awaiting Player 1's "ready") or while
+      //    pendingP2 (awaiting Player 2's "ready"). Any other turn keeps the mic CLOSED.
+      const awaitingReady = pendingP2Ref.current
+        || (!singingRef.current && !finishRef.current && !scoresShownRef.current);
+      return awaitingReady ? false : true;
     },
     gamemode: "dance",
   });
@@ -226,9 +229,13 @@ export default function DanceHost() {
   revealDriverRef.current = (text: string) => {
     if (!finishRef.current || scoresShownRef.current) return;   // only during the reveal window
     const s = text.toLowerCase();
-    if (/\bone\b|(^|\D)1(\D|$)/.test(s)) { setRevealCountdown(1); setTimeout(() => revealNowRef.current(), 550); }
-    else if (/\btwo\b|(^|\D)2(\D|$)/.test(s)) setRevealCountdown(2);
-    else if (/\bthree\b|(^|\D)3(\D|$)/.test(s)) setRevealCountdown(3);
+    if (/\bthree\b|(^|\D)3(\D|$)/.test(s)) { countStartedRef.current = true; setRevealCountdown(3); }
+    else if (/\btwo\b|(^|\D)2(\D|$)/.test(s)) { countStartedRef.current = true; setRevealCountdown(2); }
+    else if (/\bone\b|(^|\D)1(\D|$)/.test(s)) {
+      if (!countStartedRef.current) return;   // ignore a stray "one" before the count actually started
+      setRevealCountdown(1);
+      setTimeout(() => revealNowRef.current(), 550);
+    }
   };
 
   const tellFiller = useCallback(() => {
@@ -245,6 +252,7 @@ export default function DanceHost() {
     scoringRef.current = true;
     fillerRef.current = 0;
     setScoresShown(false);   // keep numbers hidden until the host reads them
+    countStartedRef.current = false;   // fresh count for this reveal
     addLog("Scoring (tallying the dance-off)…");
     void voice.startMusic("scoring_music", 0.1);   // low bed so there's never dead air
     tellFiller();   // kick off the stall; onTurnComplete keeps him going until scores load

@@ -22,6 +22,8 @@ export function useVoiceHost(opts: {
   /** Fires with each host caption phrase AT the moment he speaks it (audio-timed). Used to
    *  drive the score reveal off his spoken "Three. Two. One!" count. */
   onHostCaption?: (text: string) => void;
+  /** Gate sound effects by game state — return false to suppress (e.g. during a player's turn). */
+  allowSfx?: (name: string) => boolean;
 }) {
   const wsRef = useRef<WebSocket | null>(null);
   const playRef = useRef<AudioContext | null>(null);
@@ -47,6 +49,8 @@ export function useVoiceHost(opts: {
   onTurnCompleteRef.current = opts.onTurnComplete;
   const onHostCaptionRef = useRef(opts.onHostCaption);
   onHostCaptionRef.current = opts.onHostCaption;
+  const allowSfxRef = useRef(opts.allowSfx);
+  allowSfxRef.current = opts.allowSfx;
 
   // ── host audio + SFX (shared timeline so they never overlap) ──
   const ensureCtx = () => {
@@ -246,6 +250,7 @@ export function useVoiceHost(opts: {
         captionAnchorRef.current = Math.max(ctx.currentTime, nextRef.current);   // provisional until first chunk
       }
       else if (m.type === "sfx") {
+        if (allowSfxRef.current && !allowSfxRef.current(m.name)) return;   // gated by game state
         if (typeof m.at_ms === "number") atAudio(m.at_ms, () => void playSfx(m.name, m.duration));
         else void playSfx(m.name, m.duration);
       }
