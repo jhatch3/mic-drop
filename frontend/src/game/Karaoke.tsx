@@ -67,23 +67,55 @@ function noteFromMidi(midi: number) {
   return NOTE_NAMES[((n % 12) + 12) % 12] + Math.floor(n / 12 - 1);
 }
 
+// YIN pitch detector (cumulative-mean-normalized difference). Far more
+// octave-stable than raw autocorrelation, which is what made the meter bounce.
+const YIN_THRESHOLD = 0.15;
 function detectPitch(buf: Float32Array): { midi: number | null; conf: number } {
   const n = buf.length;
   let rms = 0;
   for (let i = 0; i < n; i++) rms += buf[i] * buf[i];
   if (Math.sqrt(rms / n) < RMS_GATE) return { midi: null, conf: 0 };
-  const minLag = Math.floor(SR / FMAX), maxLag = Math.min(n - 1, Math.floor(SR / FMIN));
-  let best = -1, bestVal = -Infinity;
-  for (let lag = minLag; lag <= maxLag; lag++) {
-    let sum = 0;
-    for (let i = 0; i < n - lag; i++) sum += buf[i] * buf[i + lag];
-    if (sum > bestVal) { bestVal = sum; best = lag; }
+
+  const minLag = Math.floor(SR / FMAX);
+  const maxLag = Math.min(Math.floor(n / 2), Math.floor(SR / FMIN));
+  const win = n - maxLag;                 // samples compared per lag
+
+  // 1) difference function  d(lag) = Σ (x[i] - x[i+lag])²
+  const d = new Float32Array(maxLag + 1);
+  for (let lag = 1; lag <= maxLag; lag++) {
+    let s = 0;
+    for (let i = 0; i < win; i++) { const diff = buf[i] - buf[i + lag]; s += diff * diff; }
+    d[lag] = s;
   }
-  let norm = 0;
-  for (let i = 0; i < n; i++) norm += buf[i] * buf[i];
-  const conf = norm > 0 ? bestVal / norm : 0;
-  if (conf < CONF_MIN || best <= 0) return { midi: null, conf };
-  return { midi: 69 + 12 * Math.log2((SR / best) / 440), conf };
+  // 2) cumulative mean normalized difference
+  const cmnd = new Float32Array(maxLag + 1);
+  cmnd[0] = 1;
+  let running = 0;
+  for (let lag = 1; lag <= maxLag; lag++) { running += d[lag]; cmnd[lag] = d[lag] * lag / (running || 1); }
+
+  // 3) first dip below threshold (→ lowest valid period, avoids octave-too-high)
+  let best = -1;
+  for (let lag = minLag; lag <= maxLag; lag++) {
+    if (cmnd[lag] < YIN_THRESHOLD) {
+      while (lag + 1 <= maxLag && cmnd[lag + 1] < cmnd[lag]) lag++;   // settle into the local min
+      best = lag; break;
+    }
+  }
+  if (best < 0) {                          // nothing confidently periodic
+    let m = Infinity;
+    for (let lag = minLag; lag <= maxLag; lag++) if (cmnd[lag] < m) { m = cmnd[lag]; best = lag; }
+    if (m > 0.5 || best <= 0) return { midi: null, conf: 0 };
+  }
+  // 4) parabolic interpolation around the dip for sub-sample precision
+  let period = best;
+  if (best > minLag && best < maxLag) {
+    const a = cmnd[best - 1], b = cmnd[best], c = cmnd[best + 1];
+    const denom = a - 2 * b + c;
+    if (denom !== 0) period = best + (a - c) / (2 * denom);
+  }
+  const conf = 1 - cmnd[best];
+  if (conf < CONF_MIN) return { midi: null, conf };
+  return { midi: 69 + 12 * Math.log2((SR / period) / 440), conf };
 }
 
 function centsError(singer: number, target: number) {
