@@ -24,10 +24,15 @@ import os
 from pathlib import Path
 from typing import Any
 
-from ai.mc_voice import roast_text, tts
+import json
+
+from ai.commentary import get_commentary
+from ai.mc_voice import tts
 from data.matches_store import get_leaderboard, insert_match
 from data.songs_store import get_contour
 from scoring.scorer import score_take
+from transcription.lyrics import lyrics_score
+from transcription.stt import transcribe_bytes
 
 log = logging.getLogger(__name__)
 
@@ -35,18 +40,56 @@ _BACKEND = Path(__file__).resolve().parent.parent
 MC_DIR = _BACKEND / "assets" / "mc"
 MC_DIR.mkdir(parents=True, exist_ok=True)
 FALLBACK_MC = MC_DIR / "fallback.mp3"
+SONGS_DIR = _BACKEND.parent / "assets" / "songs"
+
+# Final score = (1-w)*pitch + w*lyrics. Pitch stays dominant; lyrics is a real but
+# minority factor. Tune via LYRICS_WEIGHT (0 = pitch only, 1 = lyrics only).
+LYRICS_WEIGHT = float(os.getenv("LYRICS_WEIGHT", "0.3"))
 
 
 def _escrow_mode() -> str:
     return os.getenv("ESCROW_MODE", "mock").lower()
 
 
-async def _score_pair(p1_bytes: bytes, p2_bytes: bytes, contour: dict) -> tuple[dict, dict]:
-    s1, s2 = await asyncio.gather(
-        asyncio.to_thread(score_take, p1_bytes, contour, "p1"),
-        asyncio.to_thread(score_take, p2_bytes, contour, "p2"),
+def _reference_lyrics(song_id: str) -> str:
+    """Join the song's reference lyric lines into one string for fuzzy matching."""
+    try:
+        data = json.loads((SONGS_DIR / song_id / "lyrics.json").read_text())
+        return " ".join(ln.get("text", "") for ln in data.get("lines", []))
+    except Exception:
+        return ""
+
+
+def _grade_take(audio_bytes: bytes, contour: dict, reference: str, player: str) -> dict:
+    """Pitch score (authoritative) blended with a lyrics score from STT.
+
+    Blends only when we actually got a transcript + have reference lyrics; otherwise
+    falls back to pitch alone so missing/failed STT never tanks the score.
+    """
+    s = score_take(audio_bytes, contour, player)
+    pitch = int(s["score"])
+    lyrics, transcript = 0.0, ""
+    try:
+        transcript = (transcribe_bytes(audio_bytes) or {}).get("transcript", "")
+        if reference and transcript:
+            lyrics = lyrics_score(transcript, reference)
+    except Exception:  # noqa: BLE001 — STT is best-effort; never block scoring
+        log.exception("STT/lyrics failed for %s", player)
+    blended = round((1 - LYRICS_WEIGHT) * pitch + LYRICS_WEIGHT * lyrics) if (reference and transcript) else pitch
+    s["pitch_score"] = pitch
+    s["lyrics_score"] = lyrics
+    s["transcript"] = transcript
+    s["score"] = blended
+    return s
+
+
+async def _score_pair(
+    p1_bytes: bytes, p2_bytes: bytes, contour: dict, reference: str
+) -> tuple[dict, dict]:
+    return await asyncio.gather(
+        asyncio.to_thread(_grade_take, p1_bytes, contour, reference, "p1"),
+        asyncio.to_thread(_grade_take, p2_bytes, contour, reference, "p2"),
     )
-    return s1, s2
 
 
 def _pick_winner(s1: dict, s2: dict) -> str:
@@ -91,8 +134,12 @@ async def _settle(
         return f"settle-failed-{match_id[:8]}: {type(e).__name__}"
 
 
-async def _mc_audio_bytes(song_id: str, s1_score: int, s2_score: int, winner: str) -> bytes | None:
-    text = roast_text(song_id, s1_score, s2_score, winner)
+async def _commentary(song_id: str, s1_score: int, s2_score: int, winner: str) -> str:
+    return await get_commentary().generate(
+        song=song_id, p1_score=s1_score, p2_score=s2_score, winner=winner, players={})
+
+
+async def _mc_audio_bytes(text: str) -> bytes | None:
     audio = await tts(text)
     if audio:
         return audio
@@ -170,26 +217,27 @@ async def handle_finish(
     stake_lamports: int = 0,
     fee_bps: int = 0,
 ) -> dict[str, Any]:
-    # 1. Contour for the song (Snowflake-backed with local cache).
+    # 1. Contour + reference lyrics for the song.
     contour = get_contour(song_id)
+    reference = _reference_lyrics(song_id)
 
-    # 2. Score in parallel.
-    s1, s2 = await _score_pair(p1_bytes, p2_bytes, contour)
+    # 2. Score in parallel — pitch (authoritative) blended with STT lyrics score.
+    s1, s2 = await _score_pair(p1_bytes, p2_bytes, contour, reference)
 
-    # 3. Winner + commentary text.
+    # 3. Winner.
     winner = _pick_winner(s1, s2)
-    commentary = roast_text(song_id, int(s1["score"]), int(s2["score"]), winner)
 
-    # 4. Settle + TTS concurrently.
-    payout_tx, mc_audio = await asyncio.gather(
+    # 4. Commentary (async Gemini/mock) + settle concurrently, then voice the roast.
+    commentary, payout_tx = await asyncio.gather(
+        _commentary(song_id, int(s1["score"]), int(s2["score"]), winner),
         _settle(
             match_id=match_id,
             winner_label=winner,
             p1_pubkey=p1_pubkey,
             p2_pubkey=p2_pubkey,
         ),
-        _mc_audio_bytes(song_id, int(s1["score"]), int(s2["score"]), winner),
     )
+    mc_audio = await _mc_audio_bytes(commentary)
     mc_url = _save_mc(mc_audio, match_id)
 
     # 5. Persist (off the request critical path? still synchronous but cheap).

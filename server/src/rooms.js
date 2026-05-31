@@ -54,11 +54,21 @@ function setMatchId(code, matchId) {
   if (room) room.matchId = matchId;
 }
 
-function startGame(code) {
+function startGame(code, soloP2Wallet) {
   const room = rooms.get(code);
   if (!room) return { error: "Room not found" };
-  if (room.players.length < 2) return { error: "Need 2 players" };
   if (room.state !== "waiting") return { error: "Already started" };
+  // Solo test mode: no phone joined. Inject a synthetic P2 (the laptop-held demo
+  // stake key, passed as soloP2Wallet) so the turn flow p1_singing → p2_singing →
+  // finished runs with the host singing both takes. Without soloP2Wallet we still
+  // require a real second player.
+  if (room.players.length < 2) {
+    if (!soloP2Wallet) return { error: "Need 2 players" };
+    room.players.push({
+      wallet: soloP2Wallet, socketId: room.hostSocketId,
+      name: "P2", score: null, solo: true,
+    });
+  }
   room.state = "p1_singing";
   return { room };
 }
