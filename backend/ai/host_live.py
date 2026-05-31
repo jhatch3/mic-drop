@@ -43,16 +43,11 @@ def build_config() -> types.LiveConnectConfig:
                 prebuilt_voice_config=types.PrebuiltVoiceConfig(voice_name=config.HOST_VOICE),
             ),
         ),
-        # Explicit voice-activity detection so the host reliably hears speech start and
-        # replies ~0.5s after you stop talking.
+        # This model's automatic VAD doesn't trigger reliably on streamed mic audio, so
+        # we use MANUAL activity detection: the client sends activity_start/activity_end
+        # around each utterance (client-side speech detection in host_voice.html).
         realtime_input_config=types.RealtimeInputConfig(
-            automatic_activity_detection=types.AutomaticActivityDetection(
-                disabled=False,
-                start_of_speech_sensitivity=types.StartSensitivity.START_SENSITIVITY_HIGH,
-                end_of_speech_sensitivity=types.EndSensitivity.END_SENSITIVITY_HIGH,
-                prefix_padding_ms=200,
-                silence_duration_ms=600,
-            ),
+            automatic_activity_detection=types.AutomaticActivityDetection(disabled=True),
         ),
         output_audio_transcription=types.AudioTranscriptionConfig(),  # captions of what the host says
         input_audio_transcription=types.AudioTranscriptionConfig(),   # captions of what the user says

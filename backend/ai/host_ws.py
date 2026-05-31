@@ -82,6 +82,10 @@ async def host_ws(ws: WebSocket) -> None:
                                 turns=types.Content(role="user", parts=[types.Part(text=data["text"])]),
                                 turn_complete=True,
                             )
+                        elif data.get("type") == "activity_start":
+                            await session.send_realtime_input(activity_start=types.ActivityStart())
+                        elif data.get("type") == "activity_end":
+                            await session.send_realtime_input(activity_end=types.ActivityEnd())
                         elif data.get("type") == "mode":
                             auto["enabled"] = bool(data.get("autostart", True))
                         elif data.get("type") == "greet":
