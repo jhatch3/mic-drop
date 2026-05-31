@@ -45,6 +45,16 @@ so he doesn't hear himself. Connects to <code>/ws/host</code> (Gemini Live + Ele
   <button id="send" class="pill">Send</button>
 </div>
 
+<div id="help" style="display:none; background:#3a0d22; border:1px solid #ff2e97; border-radius:8px; padding:12px; margin:12px 0;">
+  <b>🎙 Microphone is blocked for this site.</b> Your OS allowing it isn't enough — Chrome saved a per-site block. Fix it:
+  <ol style="margin:8px 0 0 18px; line-height:1.6;">
+    <li>Open this in a new tab (copy it):<br><code style="user-select:all">chrome://settings/content/siteDetails?site=http%3A%2F%2Flocalhost%3A8000</code></li>
+    <li>Set <b>Microphone → Allow</b> (or click <b>Reset permissions</b>).</li>
+    <li>Come back here and <b>reload</b>, then click <b>Start talking</b> and choose <b>Allow</b>.</li>
+  </ol>
+  <span class="muted">Shortcut: click the sliders/🔒 icon left of the address bar → Microphone → Allow.</span>
+</div>
+
 <div id="caps"></div>
 <div id="log"></div>
 
@@ -160,6 +170,7 @@ $("talk").onclick = async () => {
     };
     setStatus(`mic error (${e.name}): ${hints[e.name] || e.message}`);
     logLine(`mic error: ${e.name} — ${e.message}`);
+    if (e.name === "NotAllowedError" || e.name === "SecurityError") $("help").style.display = "block";
   }
 };
 
@@ -170,6 +181,7 @@ async function checkMic() {
   try {
     const p = await navigator.permissions.query({ name: "microphone" });
     lines.push(`mic permission: ${p.state}`);
+    $("help").style.display = p.state === "denied" ? "block" : "none";
   } catch { lines.push("mic permission: (Permissions API unavailable — Safari/Firefox)"); }
   try {
     const devs = await navigator.mediaDevices.enumerateDevices();
