@@ -1,7 +1,7 @@
 """run.py — real-time webcam pose matching against a precomputed reference.
 
 Usage:
-    python run.py [--ref reference_poses.json] [--camera 0] [--loop]
+    python run.py [--ref reference_poses.json] [--video reference.mp4] [--camera 0] [--loop]
 
 Controls:
     Q / ESC  — quit
@@ -13,13 +13,19 @@ Prerequisites:
 
 Sync: wall-clock time (not frame counters) so webcam FPS drift doesn't matter.
 3-second countdown before playback starts so the user can get into position.
+
+With --video: the reference video plays as the background canvas; the player's
+live skeleton is overlaid on top. Without --video: falls back to webcam feed
+with both skeletons drawn (original behavior).
 """
 
 from __future__ import annotations
 
 import argparse
 import json
+import subprocess
 import sys
+import tempfile
 import time
 from pathlib import Path
 
@@ -127,7 +133,7 @@ def countdown(cap: cv2.VideoCapture, seconds: int = 3) -> None:
             sys.exit(0)
 
 
-def run(ref_path: Path, camera: int, loop: bool) -> None:
+def run(ref_path: Path, video_path: Path | None, camera: int, loop: bool) -> None:
     if not ref_path.exists():
         print(f"ERROR: reference file not found: {ref_path}", file=sys.stderr)
         print("Run extract_poses.py first.", file=sys.stderr)
@@ -152,6 +158,33 @@ def run(ref_path: Path, camera: int, loop: bool) -> None:
     cam_w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
     cam_h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
 
+    vid: cv2.VideoCapture | None = None
+    tmp_audio_path: str | None = None
+    if video_path is not None:
+        if not video_path.exists():
+            print(f"ERROR: video not found: {video_path}", file=sys.stderr)
+            sys.exit(1)
+        vid = cv2.VideoCapture(str(video_path))
+        if not vid.isOpened():
+            print(f"ERROR: cannot open video: {video_path}", file=sys.stderr)
+            sys.exit(1)
+        print(f"Reference video: {video_path}")
+
+        # Extract audio to a temp file for afplay
+        try:
+            tmp = tempfile.NamedTemporaryFile(suffix=".mp3", delete=False)
+            tmp_audio_path = tmp.name
+            tmp.close()
+            print("Extracting audio…")
+            subprocess.run(
+                ["ffmpeg", "-y", "-i", str(video_path), "-vn", "-q:a", "2", tmp_audio_path],
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True,
+            )
+            print("Audio ready.")
+        except Exception as e:
+            print(f"Warning: audio unavailable ({e})", file=sys.stderr)
+            tmp_audio_path = None
+
     import mediapipe as mp
     from mediapipe.tasks.python import vision as mp_vision
     from mediapipe.tasks.python.core import base_options as mp_base
@@ -168,10 +201,21 @@ def run(ref_path: Path, camera: int, loop: bool) -> None:
     print("Starting 3-second countdown…")
     countdown(cap, seconds=3)
 
+    audio_proc: subprocess.Popen | None = None
+
+    def start_audio() -> subprocess.Popen | None:
+        if tmp_audio_path:
+            return subprocess.Popen(["afplay", tmp_audio_path],
+                                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        return None
+
     scores_history: list[float] = []
     frame_ts_ms: int = 0  # monotonically increasing timestamp for MediaPipe
+    vid_frame_idx: int = -1      # last video frame decoded
+    vid_canvas: np.ndarray | None = None  # last decoded video frame (resized)
 
     with mp_vision.PoseLandmarker.create_from_options(opts) as landmarker:
+        audio_proc = start_audio()
         t0 = time.time()
         while True:
             ok, bgr = cap.read()
@@ -188,15 +232,36 @@ def run(ref_path: Path, camera: int, loop: bool) -> None:
                     elapsed = 0.0
                     ref_idx = 0
                     scores_history.clear()
+                    vid_frame_idx = -1
+                    vid_canvas = None
+                    if vid is not None:
+                        vid.set(cv2.CAP_PROP_POS_FRAMES, 0)
+                    if audio_proc:
+                        audio_proc.terminate()
+                    audio_proc = start_audio()
                     print("\nLooping reference…")
                 else:
                     print("\nReference ended.")
                     break
 
-            # Flip webcam horizontally (mirror view)
-            bgr = cv2.flip(bgr, 1)
-            rgb = cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
-            mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb)
+            # Build the display canvas: advance video sequentially (no seeking)
+            if vid is not None:
+                while vid_frame_idx < ref_idx:
+                    if vid_frame_idx < ref_idx - 1:
+                        vid.grab()  # skip without decoding
+                        vid_frame_idx += 1
+                    else:
+                        ok_v, frame = vid.read()
+                        if ok_v:
+                            vid_canvas = cv2.resize(frame, (cam_w, cam_h))
+                        vid_frame_idx += 1
+                canvas = vid_canvas if vid_canvas is not None else cv2.flip(bgr, 1)
+            else:
+                canvas = cv2.flip(bgr, 1)
+
+            # Pose detection always runs on the (mirrored) webcam frame
+            webcam_rgb = cv2.cvtColor(cv2.flip(bgr, 1), cv2.COLOR_BGR2RGB)
+            mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=webcam_rgb)
 
             frame_ts_ms += 33  # advance by ~33 ms per frame
             live_result = landmarker.detect_for_video(mp_image, frame_ts_ms)
@@ -204,13 +269,13 @@ def run(ref_path: Path, camera: int, loop: bool) -> None:
             live_lms = live_result.pose_landmarks[0] if live_result.pose_landmarks else None
             ref_lms = ref_frames[ref_idx]
 
-            # Draw reference skeleton (blue, 40% opacity)
-            if ref_lms is not None:
-                _draw_skeleton(bgr, ref_lms, (220, 100, 30), cam_w, cam_h, dot_r=5, line_w=2, alpha=0.4)
+            # Without video: draw reference skeleton (blue, 40% opacity) on webcam feed
+            if vid is None and ref_lms is not None:
+                _draw_skeleton(canvas, ref_lms, (220, 100, 30), cam_w, cam_h, dot_r=5, line_w=2, alpha=0.4)
 
-            # Draw live skeleton (green, solid)
+            # Draw live skeleton (green, solid) on top of canvas
             if live_lms is not None:
-                _draw_lm_list(bgr, live_lms, (50, 220, 80), cam_w, cam_h, dot_r=5, line_w=3)
+                _draw_lm_list(canvas, live_lms, (50, 220, 80), cam_w, cam_h, dot_r=5, line_w=3)
 
             # Compute similarity score
             live_dicts = None
@@ -235,30 +300,37 @@ def run(ref_path: Path, camera: int, loop: bool) -> None:
             if score is not None:
                 label = f"Score: {score:.2f}"
                 color = _score_color(score)
-                cv2.putText(bgr, label, (20, 70), font, 2.2, (0, 0, 0), 8, cv2.LINE_AA)
-                cv2.putText(bgr, label, (20, 70), font, 2.2, color, 4, cv2.LINE_AA)
+                cv2.putText(canvas, label, (20, 70), font, 2.2, (0, 0, 0), 8, cv2.LINE_AA)
+                cv2.putText(canvas, label, (20, 70), font, 2.2, color, 4, cv2.LINE_AA)
             elif ref_lms is None:
-                cv2.putText(bgr, "No reference frame", (20, 70), font, 1.2, (120, 120, 120), 2)
+                cv2.putText(canvas, "No reference frame", (20, 70), font, 1.2, (120, 120, 120), 2)
             else:
-                cv2.putText(bgr, "Move into frame", (20, 70), font, 1.4, (50, 50, 220), 3, cv2.LINE_AA)
+                cv2.putText(canvas, "Move into frame", (20, 70), font, 1.4, (50, 50, 220), 3, cv2.LINE_AA)
 
             # Rolling average
             if scores_history:
                 avg = sum(scores_history) / len(scores_history)
-                cv2.putText(bgr, f"Avg: {avg:.2f}", (20, 115), font, 1.0, (200, 200, 200), 2, cv2.LINE_AA)
+                cv2.putText(canvas, f"Avg: {avg:.2f}", (20, 115), font, 1.0, (200, 200, 200), 2, cv2.LINE_AA)
 
             # Frame counter / time
             time_str = f"{elapsed:.1f}s / {duration_s:.0f}s  [frame {ref_idx}/{ref_frame_count}]"
-            cv2.putText(bgr, time_str, (20, cam_h - 16), font, 0.55, (160, 160, 160), 1, cv2.LINE_AA)
-            cv2.putText(bgr, "Q = quit", (cam_w - 100, cam_h - 16), font, 0.55, (160, 160, 160), 1, cv2.LINE_AA)
+            cv2.putText(canvas, time_str, (20, cam_h - 16), font, 0.55, (160, 160, 160), 1, cv2.LINE_AA)
+            cv2.putText(canvas, "Q = quit", (cam_w - 100, cam_h - 16), font, 0.55, (160, 160, 160), 1, cv2.LINE_AA)
 
-            cv2.imshow("Pose Match", bgr)
+            cv2.imshow("Pose Match", canvas)
             key = cv2.waitKey(1) & 0xFF
             if key in (ord("q"), ord("Q"), 27):
                 break
 
     cap.release()
+    if vid is not None:
+        vid.release()
     cv2.destroyAllWindows()
+
+    if audio_proc:
+        audio_proc.terminate()
+    if tmp_audio_path:
+        Path(tmp_audio_path).unlink(missing_ok=True)
 
     if scores_history:
         final_avg = sum(scores_history) / len(scores_history)
@@ -268,10 +340,11 @@ def run(ref_path: Path, camera: int, loop: bool) -> None:
 def main() -> None:
     parser = argparse.ArgumentParser(description="Real-time webcam pose matching.")
     parser.add_argument("--ref", type=Path, default=Path("reference_poses.json"), help="Path to reference_poses.json")
+    parser.add_argument("--video", type=Path, default=None, help="Reference video to use as background canvas")
     parser.add_argument("--camera", type=int, default=0, help="Webcam index (default: 0)")
     parser.add_argument("--loop", action="store_true", help="Loop the reference video when it ends")
     args = parser.parse_args()
-    run(args.ref, args.camera, args.loop)
+    run(args.ref, args.video, args.camera, args.loop)
 
 
 if __name__ == "__main__":

@@ -51,7 +51,9 @@ export default function DanceStation() {
   const wallet = useWallet();
   const socket = getSocket();
 
-  const [stakeSOL, setStakeSOL] = useState("0.01");
+  const [stakeSOL, setStakeSOL] = useState(
+    () => new URLSearchParams(window.location.search).get("stake") ?? "0.001"
+  );
   const [room, setRoom] = useState<RoomState | null>(null);
   const [phase, setPhase] = useState<Phase>("lobby");
   const [log, setLog] = useState<string[]>([]);
