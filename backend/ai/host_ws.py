@@ -49,12 +49,19 @@ async def host_ws(ws: WebSocket) -> None:
                 turn_complete=True,
             )
 
+            rx = {"chunks": 0, "bytes": 0}
+
             async def browser_to_gemini() -> None:
                 while True:
                     msg = await ws.receive()
                     if msg.get("type") == "websocket.disconnect":
                         raise WebSocketDisconnect()
                     if (b := msg.get("bytes")) is not None:
+                        rx["chunks"] += 1
+                        rx["bytes"] += len(b)
+                        if rx["chunks"] % 50 == 0:
+                            log.warning("host_ws RX mic: %d chunks, %d KB", rx["chunks"], rx["bytes"] // 1024)
+                            await ws.send_json({"type": "debug", "rx_chunks": rx["chunks"], "rx_kb": rx["bytes"] // 1024})
                         await session.send_realtime_input(
                             audio=types.Blob(data=b, mime_type=f"audio/pcm;rate={config.LIVE_INPUT_RATE}")
                         )
@@ -90,6 +97,7 @@ async def host_ws(ws: WebSocket) -> None:
                         await ws.send_json({"type": "caption", "role": "host",
                                             "text": sc.output_transcription.text})
                     if sc.input_transcription and sc.input_transcription.text:
+                        log.warning("host_ws Gemini heard you: %r", sc.input_transcription.text)
                         await ws.send_json({"type": "caption", "role": "user",
                                             "text": sc.input_transcription.text})
                     if sc.model_turn:

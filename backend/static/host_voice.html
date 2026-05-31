@@ -127,6 +127,7 @@ function openWS() {
     else if (m.type === "sfx") { scheduleSfx(m.name, m.duration); }
     else if (m.type === "game") logLine(`🎮 game command: ${m.command}`);
     else if (m.type === "caption") caption(m.role, m.text);
+    else if (m.type === "debug") setStatus(`backend received ${m.rx_chunks} mic chunks (${m.rx_kb} KB) — keep talking`);
     else if (m.type === "turn_complete") { /* host finished a turn */ }
   };
 }
