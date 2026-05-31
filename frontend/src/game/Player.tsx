@@ -279,16 +279,17 @@ export default function Player() {
 
 // ─── Styles ───────────────────────────────────────────────────────────────────
 const styles: Record<string, React.CSSProperties> = {
-  root: { minHeight: "100vh", background: "#0a0a0a", color: "#fff", fontFamily: "system-ui, sans-serif", padding: 20 },
-  inner: { maxWidth: 400, margin: "0 auto" },
-  title: { margin: "0 0 12px", fontSize: 20, fontWeight: 700 },
-  card: { background: "#111", border: "1px solid #222", borderRadius: 12, padding: 20, marginBottom: 12 },
-  cardTitle: { fontSize: 16, fontWeight: 600, marginBottom: 4, color: "#e5e7eb" },
-  label: { color: "#6b7280", fontSize: 11, textTransform: "uppercase" as const, letterSpacing: 1 },
-  bigCode: { fontSize: 48, fontWeight: 900, letterSpacing: 8, textAlign: "center" as const, color: "#facc15", padding: "12px 0" },
-  input: { display: "block", width: "100%", background: "#1a1a1a", border: "1px solid #333", borderRadius: 6, padding: "10px 14px", color: "#fff", fontSize: 22, fontWeight: 700, letterSpacing: 4, textTransform: "uppercase" as const, marginTop: 4, marginBottom: 12, textAlign: "center" as const },
-  playerRow: { padding: "6px 0", borderBottom: "1px solid #1a1a1a", fontSize: 14, fontFamily: "monospace" },
-  pulse: { width: 80, height: 80, borderRadius: "50%", background: "#4ade8033", border: "3px solid #4ade80", margin: "20px auto", animation: "pulse 1s infinite" },
+  // Transparent so the global synthwave backdrop + scanlines show through.
+  root: { minHeight: "100vh", color: "#f7f0ff", fontFamily: "var(--font-body)", padding: 20, position: "relative", zIndex: 10 },
+  inner: { maxWidth: 420, margin: "0 auto" },
+  title: { margin: "0 0 16px", fontSize: 16, fontFamily: "var(--font-display)", color: "#ff2e97", textShadow: "0 0 8px #ff2e97, 0 0 22px #ff2e97" },
+  card: { background: "rgba(22,10,43,0.8)", border: "1px solid #3a2168", borderRadius: 12, padding: 20, marginBottom: 12, backdropFilter: "blur(4px)", boxShadow: "0 0 0 1px #ff2e9755, 0 0 16px #ff2e9733" },
+  cardTitle: { fontSize: 12, fontFamily: "var(--font-display)", marginBottom: 10, color: "#f7f0ff", textTransform: "uppercase" as const, letterSpacing: 1 },
+  label: { color: "#b9a7e6", fontSize: 10, fontFamily: "var(--font-display)", textTransform: "uppercase" as const, letterSpacing: 1 },
+  bigCode: { fontSize: 40, fontFamily: "var(--font-display)", letterSpacing: 6, textAlign: "center" as const, color: "#05d9e8", textShadow: "0 0 12px #05d9e8", padding: "16px 0" },
+  input: { display: "block", width: "100%", background: "#160a2b", border: "1px solid #3a2168", borderRadius: 8, padding: "12px 14px", color: "#f7f0ff", fontSize: 24, fontFamily: "var(--font-body)", letterSpacing: 6, textTransform: "uppercase" as const, marginTop: 6, marginBottom: 12, textAlign: "center" as const },
+  playerRow: { padding: "8px 0", borderBottom: "1px solid #3a216855", fontSize: 16, fontFamily: "ui-monospace, monospace" },
+  pulse: { width: 80, height: 80, borderRadius: "50%", background: "#ff2e9733", border: "3px solid #ff2e97", margin: "20px auto", boxShadow: "0 0 22px #ff2e97", animation: "pulse 1s infinite" },
 };
 
 function Btn({ onClick, disabled, children }: {
@@ -299,11 +300,12 @@ function Btn({ onClick, disabled, children }: {
       onClick={onClick}
       disabled={disabled}
       style={{
-        background: disabled ? "#222" : "#8b5cf6",
-        color: disabled ? "#555" : "#fff",
-        border: "none", borderRadius: 8, padding: "12px 20px",
+        background: disabled ? "#241544" : "linear-gradient(100deg,#ff2e97,#b537f2)",
+        color: disabled ? "#6b5b8e" : "#fff",
+        border: "none", borderRadius: 10, padding: "13px 20px",
         cursor: disabled ? "not-allowed" : "pointer",
-        fontSize: 15, fontWeight: 600, width: "100%",
+        fontSize: 12, fontFamily: "var(--font-display)", textTransform: "uppercase" as const, letterSpacing: 1,
+        width: "100%", boxShadow: disabled ? "none" : "0 0 18px #ff2e9766",
       }}
     >
       {children}

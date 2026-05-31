@@ -6,6 +6,10 @@ import QRCode from "react-qr-code";
 import { useGameRoom } from "../services/useGameRoom";
 import { useEscrow } from "../services/useEscrow";
 import Karaoke, { type KaraokeResult } from "./Karaoke";
+import { NeonHeading, NeonButton, CRTCard } from "@/retro";
+import { Input } from "@/components/ui/input";
+
+const labelCls = "font-display text-[10px] uppercase tracking-widest text-muted-foreground";
 
 export default function KaraokeHost() {
   const wallet = useWallet();
@@ -38,140 +42,103 @@ export default function KaraokeHost() {
     }
   }, [room, createAndStake, beginGame, addLog]);
 
-
   const joinUrl = room ? `${window.location.origin}/play?code=${room.code}` : null;
 
+  // Gaming turn: hand the whole screen to the live karaoke station.
+  if (phase === "gaming" && room && currentTurn) {
+    return (
+      <Karaoke
+        key={currentTurn.wallet}
+        playerLabel={`${currentTurn.player} — sing into this laptop!`}
+        onFinish={handleTurnFinish}
+      />
+    );
+  }
+
   return (
-    <div style={S.root}>
-      <div style={S.inner}>
-        <div style={S.header}>
-          <h1 style={S.title}>🎤 Karaoke Battle</h1>
+    <div className="relative z-10 min-h-screen px-4 py-8 text-foreground">
+      <div className="mx-auto w-full max-w-xl">
+        <div className="mb-8 flex items-center justify-between gap-4">
+          <NeonHeading className="text-lg sm:text-xl">KARAOKE&nbsp;BATTLE</NeonHeading>
           <WalletMultiButton />
         </div>
 
         {phase === "lobby" && (
-          <div style={S.card}>
-            <div style={S.cardTitle}>Create a Game</div>
-            <label style={S.label}>Wager (SOL)</label>
-            <input
-              style={S.input} type="number" step="0.001" min="0.001"
-              value={stakeSOL} onChange={(e) => setStakeSOL(e.target.value)}
-            />
-            <Btn onClick={handleCreateRoom} busy={busy} disabled={!wallet.publicKey}>
-              {wallet.publicKey ? "Create Room" : "Connect Wallet First"}
-            </Btn>
-          </div>
+          <CRTCard title="Create a Game" className="space-y-4">
+            <div className="space-y-1.5">
+              <label className={labelCls}>Wager (SOL)</label>
+              <Input type="number" step="0.001" min="0.001" value={stakeSOL}
+                onChange={(e) => setStakeSOL(e.target.value)} className="font-body text-base" />
+            </div>
+            <NeonButton onClick={handleCreateRoom} disabled={busy || !wallet.publicKey} size="lg" className="w-full">
+              {busy ? "…" : wallet.publicKey ? "▶ Create Room" : "Connect Wallet First"}
+            </NeonButton>
+          </CRTCard>
         )}
 
         {phase === "waiting" && room && (
-          <div style={S.card}>
-            <div style={S.cardTitle}>Share the Code</div>
-            <div style={S.bigCode}>{room.code}</div>
+          <CRTCard title="Share the Code" glow="cyan" className="text-center">
+            <div className="font-display text-cyan text-glow my-4 text-4xl tracking-[0.3em]">{room.code}</div>
             {joinUrl && (
-              <div style={{ display: "flex", justifyContent: "center", margin: "16px 0", background: "#fff", padding: 16, borderRadius: 12 }}>
-                <QRCode value={joinUrl} size={180} />
-              </div>
+              <div className="mx-auto my-4 w-fit rounded-xl bg-white p-4"><QRCode value={joinUrl} size={180} /></div>
             )}
-            <div style={{ color: "#9ca3af", fontSize: 12, textAlign: "center", marginBottom: 16, wordBreak: "break-all" }}>
-              {joinUrl}
+            <div className="mb-4 break-all text-xs text-muted-foreground">{joinUrl}</div>
+            <div className={`${labelCls} mb-2 text-left`}>Players joined: {room.players.length} / 2</div>
+            <div className="space-y-1 text-left">
+              {room.players.map((p) => (
+                <div key={p.wallet} className="border-b border-border/50 py-1.5 font-mono text-sm">
+                  <span className="text-lime text-glow-sm">✓</span> {p.name} — {p.wallet.slice(0, 10)}…
+                </div>
+              ))}
             </div>
-            <div style={S.label}>Players joined: {room.players.length} / 2</div>
-            {room.players.map((p) => (
-              <div key={p.wallet} style={S.playerRow}>
-                <span style={{ color: "#4ade80" }}>✓</span> {p.name} — {p.wallet.slice(0, 10)}…
-              </div>
-            ))}
             {room.players.length === 2 && (
-              <Btn onClick={handleStartGame} busy={busy} color="#8b5cf6" style={{ marginTop: 16 }}>
-                Start Game & Lock Wagers
-              </Btn>
+              <NeonButton onClick={handleStartGame} disabled={busy} variant="lime" size="lg" className="mt-4 w-full">
+                {busy ? "…" : "🔒 Start Game & Lock Wagers"}
+              </NeonButton>
             )}
-          </div>
+          </CRTCard>
         )}
 
-        {phase === "gaming" && room && (
-          currentTurn ? (
-            // Laptop sings this turn for real (pitch + lyrics); score auto-submits on finish.
-            <Karaoke
-              key={currentTurn.wallet}
-              playerLabel={`${currentTurn.player} — sing into this laptop!`}
-              onFinish={handleTurnFinish}
-            />
-          ) : (
-            <div style={S.card}>
-              <div style={S.cardTitle}>Get Ready…</div>
-              <div style={{ marginTop: 12 }}>
-                {room.players.map((p) => (
-                  <div key={p.wallet} style={S.playerRow}>
-                    {p.name}: {p.score !== null ? `${p.score}/100` : "—"}
-                  </div>
-                ))}
-              </div>
+        {phase === "gaming" && room && !currentTurn && (
+          <CRTCard title="Get Ready" glow="magenta">
+            <div className="space-y-1">
+              {room.players.map((p) => (
+                <div key={p.wallet} className="border-b border-border/50 py-1 font-mono text-sm">
+                  {p.name}: {p.score !== null ? `${p.score}/100` : "—"}
+                </div>
+              ))}
             </div>
-          )
+          </CRTCard>
         )}
 
         {phase === "finished" && room && (
-          <div style={S.card}>
-            <div style={S.cardTitle}>Game Over</div>
-            {room.players.map((p) => (
-              <div key={p.wallet} style={{
-                ...S.playerRow,
-                color: p.wallet === room.winner ? "#4ade80" : "#fff",
-                fontWeight: p.wallet === room.winner ? 700 : 400,
-              }}>
-                {p.wallet === room.winner ? "🏆 " : ""}{p.name}: {p.score}/100
-              </div>
-            ))}
+          <CRTCard title="Game Over" className="space-y-4">
+            <NeonHeading as="h2" color="lime" className="text-center text-base">
+              {room.winner ? "WE HAVE A WINNER" : "TIE"}
+            </NeonHeading>
+            <div className="space-y-1">
+              {room.players.map((p) => (
+                <div key={p.wallet} className={`flex items-center justify-between border-b border-border/50 py-1.5 font-mono text-sm ${p.wallet === room.winner ? "text-lime text-glow-sm" : ""}`}>
+                  <span>{p.wallet === room.winner ? "🏆 " : ""}{p.name}</span>
+                  <span className="font-display text-xs">{p.score ?? "—"}/100</span>
+                </div>
+              ))}
+            </div>
             {room.winner && room.matchId && (
-              <Btn onClick={() => settle(room.matchId!, room.winner!)} busy={busy} color="#8b5cf6" style={{ marginTop: 16 }}>
-                Pay Winner on Solana
-              </Btn>
+              <NeonButton onClick={() => settle(room.matchId!, room.winner!)} disabled={busy} variant="lime" size="lg" className="w-full">
+                {busy ? "…" : "💸 Pay Winner on Solana"}
+              </NeonButton>
             )}
-          </div>
+          </CRTCard>
         )}
 
-        <div style={{ ...S.card, background: "#0f0f0f", marginTop: 8 }}>
-          <div style={S.label}>Log</div>
-          <div style={{ marginTop: 6, maxHeight: 150, overflowY: "auto" }}>
-            {log.length === 0 && <div style={{ color: "#555", fontSize: 12 }}>Events will appear here</div>}
-            {log.map((l, i) => <div key={i} style={{ fontSize: 12, color: "#9ca3af", marginBottom: 2 }}>{l}</div>)}
+        <CRTCard title="Log" glow="purple" animate={false} className="mt-3 bg-card/60">
+          <div className="max-h-40 space-y-0.5 overflow-y-auto">
+            {log.length === 0 && <div className="text-xs text-muted-foreground/60">Events will appear here</div>}
+            {log.map((l, i) => <div key={i} className="font-mono text-xs text-muted-foreground">{l}</div>)}
           </div>
-        </div>
+        </CRTCard>
       </div>
     </div>
-  );
-}
-
-const S: Record<string, React.CSSProperties> = {
-  root: { minHeight: "100vh", background: "#0a0a0a", color: "#fff", fontFamily: "system-ui, sans-serif", padding: 24 },
-  inner: { maxWidth: 560, margin: "0 auto" },
-  header: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 32 },
-  title: { margin: 0, fontSize: 22, fontWeight: 700 },
-  card: { background: "#111", border: "1px solid #222", borderRadius: 12, padding: 20, marginBottom: 12 },
-  cardTitle: { fontSize: 16, fontWeight: 600, marginBottom: 8, color: "#e5e7eb" },
-  label: { color: "#6b7280", fontSize: 11, textTransform: "uppercase" as const, letterSpacing: 1 },
-  bigCode: { fontSize: 64, fontWeight: 900, letterSpacing: 12, textAlign: "center" as const, color: "#facc15", padding: "20px 0" },
-  input: { display: "block", width: "100%", background: "#1a1a1a", border: "1px solid #333", borderRadius: 6, padding: "8px 12px", color: "#fff", fontSize: 16, marginTop: 4, marginBottom: 16 },
-  playerRow: { padding: "6px 0", borderBottom: "1px solid #1a1a1a", fontSize: 14, fontFamily: "monospace" },
-};
-
-function Btn({ onClick, busy, disabled, children, color, style }: {
-  onClick: () => void; busy: boolean; disabled?: boolean;
-  children: React.ReactNode; color?: string; style?: React.CSSProperties;
-}) {
-  return (
-    <button
-      onClick={onClick} disabled={busy || disabled}
-      style={{
-        background: busy || disabled ? "#222" : (color ?? "#3b82f6"),
-        color: busy || disabled ? "#555" : "#fff",
-        border: "none", borderRadius: 8, padding: "10px 20px",
-        cursor: busy || disabled ? "not-allowed" : "pointer",
-        fontSize: 14, fontWeight: 600, width: "100%", ...style,
-      }}
-    >
-      {busy ? "…" : children}
-    </button>
   );
 }
