@@ -1,4 +1,4 @@
-import { useState, useCallback, useRef, type CSSProperties } from "react";
+import { useState, useCallback, useEffect, useRef, type CSSProperties } from "react";
 import { useWallet } from "@solana/wallet-adapter-react";
 import { WalletMultiButton } from "@solana/wallet-adapter-react-ui";
 import { LAMPORTS_PER_SOL } from "@solana/web3.js";
@@ -182,16 +182,41 @@ export default function DanceHost() {
   // "Start" button — pressed once BOTH players have joined. This user gesture brings the
   // host in (unlocks audio); the backend auto-greets and asks if we're ready to start.
   // Lobby "STAKE TO PLAY" — locks the wager on-chain (best-effort), THEN brings the host in.
-  const handleStakeAndStart = useCallback(async () => {
-    if (!room) return;
-    if (room.players.length >= 2) {
-      try { await createAndStake(room.code, room.players[1].wallet, room.stake); addLog("Wager staked ✓"); }
-      catch (e: any) { addLog("stake skipped: " + e.message); }
-    }
-    voice.connect(true);   // host takes over
+  const isReal = (w?: string) => !!w && !w.startsWith("guest") && w.length >= 32;
+  const bothReal = !!room && room.players.length === 2 && room.players.every((p) => isReal(p.wallet));
+  const bothStaked = !!room && room.players.length === 2 && room.players.every((p) => p.staked);
+  const [waitingStakes, setWaitingStakes] = useState(false);
+
+  const bringHostIn = useCallback(() => {
+    voice.connect(true);   // host takes over (this gesture also unlocks audio)
     fetch(`${API_BASE}/api/sfx/scoring_music`).catch(() => {});
     fetch(`${API_BASE}/api/sfx/victory`).catch(() => {});
-  }, [room, createAndStake, addLog, voice]);
+  }, [voice]);
+
+  const handleStakeAndStart = useCallback(async () => {
+    if (!room) return;
+    // Guest / solo: on-chain escrow isn't possible — just bring the host in (exhibition).
+    if (!bothReal) { bringHostIn(); return; }
+    // Real wallets: stake P1, then GATE — the host only starts once Player 2 has staked too,
+    // so the pot is always fully funded and the on-chain settle can actually pay the winner.
+    setWaitingStakes(true);
+    try {
+      await createAndStake(room.code, room.players[1].wallet, room.stake);
+      addLog("P1 staked ✓ — waiting for Player 2 to stake on their phone…");
+    } catch (e: any) {
+      addLog("stake failed: " + e.message);
+      setWaitingStakes(false);
+    }
+  }, [room, bothReal, bringHostIn, createAndStake, addLog]);
+
+  // Gate: once BOTH players have staked, the host takes over and the show begins.
+  useEffect(() => {
+    if (waitingStakes && bothStaked) {
+      setWaitingStakes(false);
+      addLog("Both players staked ✓ — host taking over");
+      bringHostIn();
+    }
+  }, [waitingStakes, bothStaked, bringHostIn, addLog]);
 
   // Host called start_p1_turn (after hearing "ready") → put P1 on the floor. (Wager already staked.)
   const startP1 = useCallback(async () => {
@@ -370,6 +395,10 @@ export default function DanceHost() {
   const page: CSSProperties = { position: "relative", zIndex: 10, minHeight: "100vh", display: "flex", flexDirection: "column", background: PAL.purpleDp, fontFamily: FONT.body };
   const center: CSSProperties = { flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 20, padding: "40px 20px", textAlign: "center" };
 
+  // End screen is driven by LOCAL state, not the server's `phase` (its `game:over` socket event
+  // can be slow/dropped/race the local finish fetch, which left the screen blank).
+  const ending = scoring || !!finish || phase === "finished";
+
   // 3-2-1 countdown takes over the whole screen so the music never starts under the host's
   // voice — it begins only when this hits "GO". No blinking.
   if (countdown !== null) {
@@ -524,7 +553,7 @@ export default function DanceHost() {
             </>
           )}
 
-          {phase === "finished" && room && scoring && !finish && (
+          {room && ending && !finish && (
             <>
               <div style={{ fontFamily: FONT.display, fontSize: "clamp(32px,7vw,56px)", color: PAL.white, textShadow: `4px 4px 0 ${PAL.ink}`, textAlign: "center" }}>INSTANT REPLAY…</div>
               <div style={{ fontFamily: FONT.body, fontWeight: 800, fontSize: "clamp(16px,2.4vw,21px)", color: PAL.white, maxWidth: 600, textAlign: "center" }}>
@@ -537,7 +566,7 @@ export default function DanceHost() {
             </>
           )}
 
-          {phase === "finished" && room && finish && (
+          {room && finish && (
             !scoresShown ? (
               <div style={{ fontFamily: FONT.display, fontSize: "clamp(22px,5vw,40px)", letterSpacing: 2, color: PAL.white, textShadow: `3px 3px 0 ${PAL.ink}`, textAlign: "center" }}>🔊 THE MC IS REVEALING THE RESULTS…</div>
             ) : (
@@ -591,21 +620,25 @@ export default function DanceHost() {
       )}
       {phase === "waiting" && (
         <LowerThird
-          kicker={voice.connected ? (voice.listening ? "LISTENING 🔊" : "ON AIR") : (room && room.players.length < 2 ? "WAITING" : "STAKE UP")}
-          kickerColor={voice.connected ? PAL.slime : (room && room.players.length < 2 ? PAL.orange : PAL.yellow)} kickerFg={PAL.ink}
+          kicker={voice.connected ? (voice.listening ? "LISTENING 🔊" : "ON AIR")
+            : waitingStakes ? "LOCKING POT 🔒"
+            : room && room.players.length < 2 ? "WAITING" : "STAKE UP"}
+          kickerColor={voice.connected ? PAL.slime : waitingStakes ? PAL.yellow : (room && room.players.length < 2 ? PAL.orange : PAL.yellow)} kickerFg={PAL.ink}
           headline={voice.connected
             ? (voice.listening ? "Say “I'm ready!” to kick it off." : "The host is taking over…")
-            : room && room.players.length < 2
-              ? "Waiting for the challenger to check in…"
-              : `Both in! Stake ${stakeSOL} SOL each to play, then the host takes the floor.`}
+            : waitingStakes
+              ? "You're staked. Waiting for Player 2 to tap STAKE on their phone…"
+              : room && room.players.length < 2
+                ? "Waiting for the challenger to check in…"
+                : `Both in! Stake ${stakeSOL} SOL each to play, then the host takes the floor.`}
           bodyColor={PAL.cyan}
           action={!voice.connected
-            ? <BevelBtn color={PAL.magenta} fg={PAL.white} onClick={handleStakeAndStart} disabled={busy || !room || room.players.length < 2}>
-                {room && room.players.length < 2 ? "WAITING…" : busy ? "STAKING…" : `💰 STAKE ${stakeSOL} SOL & PLAY »`}
+            ? <BevelBtn color={PAL.magenta} fg={PAL.white} onClick={handleStakeAndStart} disabled={busy || waitingStakes || !room || room.players.length < 2}>
+                {room && room.players.length < 2 ? "WAITING…" : waitingStakes ? "WAITING FOR P2…" : busy ? "STAKING…" : `💰 STAKE ${stakeSOL} SOL & PLAY »`}
               </BevelBtn>
             : undefined} />
       )}
-      {phase === "finished" && (
+      {ending && (
         <LowerThird kicker="THE MC 🔊" kickerColor={PAL.magenta} kickerFg={PAL.white}
           headline={finish && scoresShown ? "That's the show. Run it back?" : "Reviewing every move. Counting the SOL. Sharpening the burns."}
           bodyColor={PAL.cyan}
