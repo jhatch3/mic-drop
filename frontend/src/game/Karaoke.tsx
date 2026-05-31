@@ -14,13 +14,34 @@ function wordsForLine(line: LyricLine): Word[] {
   }));
 }
 
-const SONG = {
+export interface SongDef {
+  audio:   string;
+  lyrics:  string;
+  contour: string;
+  title:   string;
+  artist:  string;
+}
+
+export const DEFAULT_SONG: SongDef = {
   audio:   "/songs/firework/instrumental.mp3",
   lyrics:  "/songs/firework/lyrics.json",
   contour: "/songs/firework/contour.json",
   title:   "Firework",
   artist:  "Katy Perry",
 };
+
+export interface KaraokeResult { score: number; hits: number; scored: number; }
+
+interface KaraokeProps {
+  /** Song to sing. Defaults to Firework. */
+  song?: SongDef;
+  /** Optional player badge shown in the top bar (e.g. "Player 1"). */
+  playerLabel?: string;
+  /** When provided, the component runs in "turn" mode: finishing the song (or
+   *  pressing "Finish turn") fires this with the final score instead of just
+   *  stopping playback. Used by the local hot-seat 2-player game. */
+  onFinish?: (result: KaraokeResult) => void;
+}
 
 const SR = 44100, FMIN = 65, FMAX = 1000, RMS_GATE = 0.002, CONF_MIN = 0.4;
 const HIT_CENTS = 75; // widened from 50 → easier
@@ -127,7 +148,7 @@ function drawGraph(
 }
 
 // ─── Main component ───────────────────────────────────────────────────────────
-export default function Karaoke() {
+export default function Karaoke({ song = DEFAULT_SONG, playerLabel, onFinish }: KaraokeProps = {}) {
   const [lines, setLines]           = useState<LyricLine[]>([]);
   const [contour, setContour]       = useState<ContourFrame[]>([]);
   const [activeIdx, setActiveIdx]   = useState(-1);
@@ -153,9 +174,9 @@ export default function Karaoke() {
   const graphRef       = useRef<{ t: number; target: number | null; singer: number | null }[]>([]);
 
   useEffect(() => {
-    fetch(SONG.lyrics).then(r => r.json()).then(d => setLines(d.lines));
-    fetch(SONG.contour).then(r => r.json()).then(d => setContour(d.frames));
-  }, []);
+    fetch(song.lyrics).then(r => r.json()).then(d => setLines(d.lines));
+    fetch(song.contour).then(r => r.json()).then(d => setContour(d.frames));
+  }, [song.lyrics, song.contour]);
 
   const tick = useCallback(() => {
     const audio = audioRef.current;
@@ -230,6 +251,22 @@ export default function Karaoke() {
     cancelAnimationFrame(rafRef.current);
   }, []);
 
+  // Turn mode: hand the final score back to the orchestrator and release the mic.
+  // Guarded so the natural song-end + a manual "Finish turn" can't double-fire.
+  const finishedRef = useRef(false);
+  const finishTurn = useCallback(() => {
+    if (!onFinish || finishedRef.current) return;
+    finishedRef.current = true;
+    const audio = audioRef.current;
+    if (audio) audio.pause();
+    setPlaying(false);
+    streamRef.current?.getTracks().forEach(t => t.stop());
+    const finalScore = scoredRef.current > 0
+      ? Math.round(100 * hitsRef.current / scoredRef.current)
+      : 0;
+    onFinish({ score: finalScore, hits: hitsRef.current, scored: scoredRef.current });
+  }, [onFinish]);
+
   const progress = duration > 0 ? (currentTime / duration) * 100 : 0;
   const scoreColor = score >= 80 ? "#4ade80" : score >= 50 ? "#facc15" : "#f87171";
   const fmt = (s: number) => `${Math.floor(s / 60)}:${Math.floor(s % 60).toString().padStart(2, "0")}`;
@@ -243,9 +280,9 @@ export default function Karaoke() {
     <div style={{ minHeight: "100vh", background: "#07070f", color: "#fff", fontFamily: "'Inter', system-ui, sans-serif", display: "flex", flexDirection: "column" }}>
       <audio
         ref={audioRef}
-        src={SONG.audio}
+        src={song.audio}
         onLoadedMetadata={e => setDuration((e.target as HTMLAudioElement).duration)}
-        onEnded={() => setPlaying(false)}
+        onEnded={() => { setPlaying(false); finishTurn(); }}
       />
 
       {/* Top bar */}
@@ -253,9 +290,14 @@ export default function Karaoke() {
         <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
           <div style={{ width: 36, height: 36, borderRadius: 8, background: "linear-gradient(135deg,#7c3aed,#4f46e5)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 18 }}>🎤</div>
           <div>
-            <div style={{ fontWeight: 700, fontSize: 15 }}>{SONG.title}</div>
-            <div style={{ color: "#4b5563", fontSize: 12 }}>{SONG.artist}</div>
+            <div style={{ fontWeight: 700, fontSize: 15 }}>{song.title}</div>
+            <div style={{ color: "#4b5563", fontSize: 12 }}>{song.artist}</div>
           </div>
+          {playerLabel && (
+            <div style={{ marginLeft: 8, fontSize: 12, fontWeight: 700, color: "#a78bfa", background: "#a78bfa1a", border: "1px solid #a78bfa40", borderRadius: 20, padding: "4px 12px" }}>
+              {playerLabel}
+            </div>
+          )}
         </div>
 
         {/* Score badge */}
@@ -265,6 +307,11 @@ export default function Karaoke() {
           <button onClick={togglePlay} style={{ background: playing ? "#1f2937" : "linear-gradient(135deg,#7c3aed,#6d28d9)", border: "none", borderRadius: 10, color: "#fff", padding: "10px 22px", cursor: "pointer", fontWeight: 700, fontSize: 14 }}>
             {playing ? "⏸ Pause" : "▶ Sing"}
           </button>
+          {onFinish && (
+            <button onClick={finishTurn} style={{ background: "linear-gradient(135deg,#16a34a,#15803d)", border: "none", borderRadius: 10, color: "#fff", padding: "10px 18px", cursor: "pointer", fontWeight: 700, fontSize: 14 }}>
+              Finish turn →
+            </button>
+          )}
         </div>
       </div>
 

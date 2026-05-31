@@ -1,8 +1,21 @@
-import { useState, useEffect } from "react";
-import { useWallet } from "@solana/wallet-adapter-react";
+import { useState, useEffect, useCallback } from "react";
+import { useWallet, useConnection } from "@solana/wallet-adapter-react";
 import { WalletMultiButton } from "@solana/wallet-adapter-react-ui";
+import { AnchorProvider, Program, BN } from "@coral-xyz/anchor";
+import { PublicKey, SystemProgram } from "@solana/web3.js";
 import { getSocket } from "./socket";
 import type { RoomState } from "./types";
+import Karaoke, { DEFAULT_SONG, type KaraokeResult } from "./Karaoke";
+import IDL from "../idl/pitch_battle.json";
+
+const PROGRAM_ID = new PublicKey("2eMwChdNVoxeoWjdaiTuBGasDiHCKN3jbw7dL5eSyuZf");
+
+function matchPda(id: string) {
+  return PublicKey.findProgramAddressSync([Buffer.from("match"), Buffer.from(id)], PROGRAM_ID)[0];
+}
+function vaultPda(id: string) {
+  return PublicKey.findProgramAddressSync([Buffer.from("vault"), Buffer.from(id)], PROGRAM_ID)[0];
+}
 
 interface FinishPayload {
   room: RoomState;
@@ -14,6 +27,7 @@ interface FinishPayload {
 
 export default function Player() {
   const wallet = useWallet();
+  const { connection } = useConnection();
   const socket = getSocket();
 
   // Pre-fill code from URL ?code=PITCH1
@@ -22,10 +36,13 @@ export default function Player() {
   const [room, setRoom] = useState<RoomState | null>(null);
   const [joined, setJoined] = useState(false);
   const [myTurn, setMyTurn] = useState(false);
+  const [turnDone, setTurnDone] = useState(false);
   const [gameOver, setGameOver] = useState(false);
   const [finish, setFinish] = useState<FinishPayload | null>(null);
   const [log, setLog] = useState<string[]>([]);
   const [error, setError] = useState("");
+  const [staking, setStaking] = useState(false);
+  const [staked, setStaked] = useState(false);
 
   const addLog = (msg: string) => setLog((p) => [`${new Date().toLocaleTimeString()} — ${msg}`, ...p]);
 
@@ -40,6 +57,7 @@ export default function Player() {
     socket.on("turn:start", (t: { player: string; wallet: string }) => {
       if (wallet.publicKey && t.wallet === wallet.publicKey.toBase58()) {
         setMyTurn(true);
+        setTurnDone(false);
         addLog("It's YOUR turn — sing!");
       } else {
         setMyTurn(false);
@@ -69,6 +87,29 @@ export default function Player() {
     return () => { socket.removeAllListeners(); };
   }, [socket, wallet.publicKey]);
 
+  const stakeOnChain = useCallback(async () => {
+    if (!wallet.publicKey || !wallet.wallet?.adapter || !room?.matchId) return;
+    setStaking(true);
+    addLog("Staking on-chain — approve in Phantom…");
+    try {
+      const provider = new AnchorProvider(connection, wallet.wallet.adapter as any, { commitment: "confirmed" });
+      const program = new Program(IDL as any, provider);
+      const mPda = matchPda(room.matchId);
+      const vPda = vaultPda(room.matchId);
+      const sig = await program.methods
+        .stake(room.matchId)
+        .accounts({ signer: wallet.publicKey, matchAccount: mPda, vault: vPda, systemProgram: SystemProgram.programId })
+        .rpc();
+      addLog(`Staked ✓ (${sig.slice(0, 12)}…)`);
+      setStaked(true);
+      socket.emit("player:staked", { code: room.code, wallet: wallet.publicKey.toBase58() });
+    } catch (e: any) {
+      addLog("Stake failed: " + e.message);
+      setError(e.message);
+    }
+    setStaking(false);
+  }, [wallet, connection, room, socket]);
+
   const joinRoom = () => {
     if (!wallet.publicKey || !code) return;
     setError("");
@@ -77,8 +118,28 @@ export default function Player() {
     addLog(`Joining room ${code}…`);
   };
 
+  // This device owns the mic for ITS player's turn (per the device model, the
+  // singer's own screen runs the karaoke + client-side pitch graph). When done we
+  // send only the final score over the socket — no audio ever leaves this device.
+  const finishTurn = useCallback((result: KaraokeResult) => {
+    if (!room || !wallet.publicKey) return;
+    socket.emit("score:submit", { code: room.code, wallet: wallet.publicKey.toBase58(), score: result.score });
+    setMyTurn(false);
+    setTurnDone(true);
+    addLog(`You scored ${result.score}/100 — waiting for the result…`);
+  }, [room, wallet.publicKey, socket]);
+
   const myInfo = room?.players.find((p) => p.wallet === wallet.publicKey?.toBase58());
   const opponentInfo = room?.players.find((p) => p.wallet !== wallet.publicKey?.toBase58());
+
+  // It's this player's turn to sing → take over the whole screen with the karaoke
+  // station. Highest pitch accuracy wins; the laptop settles the wager on-chain.
+  if (
+    joined && room && !gameOver && myTurn && !turnDone &&
+    (room.state === "p1_singing" || room.state === "p2_singing")
+  ) {
+    return <Karaoke song={DEFAULT_SONG} playerLabel="Your turn" onFinish={finishTurn} />;
+  }
 
   return (
     <div style={styles.root}>
@@ -117,19 +178,40 @@ export default function Player() {
         {joined && room && room.state === "waiting" && (
           <div style={styles.card}>
             <div style={styles.cardTitle}>Lobby</div>
-            <div style={{ color: "#9ca3af", fontSize: 14, margin: "12px 0" }}>
-              Waiting for host to start the game…
-            </div>
             <div style={styles.bigCode}>{room.code}</div>
-            <div style={{ marginTop: 12 }}>
+            <div style={{ marginTop: 12, marginBottom: 16 }}>
               <div style={styles.label}>Players</div>
               {room.players.map((p) => (
                 <div key={p.wallet} style={styles.playerRow}>
-                  <span style={{ color: "#4ade80" }}>✓</span>{" "}
+                  <span style={{ color: p.staked ? "#4ade80" : "#facc15" }}>
+                    {p.staked ? "✓ Staked" : "○ Not staked"}
+                  </span>{" "}
                   {p.name} {p.wallet === wallet.publicKey?.toBase58() ? "(you)" : ""}
                 </div>
               ))}
             </div>
+
+            {/* Stake button — appears once host creates the on-chain match */}
+            {room.matchId && !staked && (
+              <div>
+                <div style={{ color: "#facc15", fontSize: 13, marginBottom: 10 }}>
+                  Host locked the wager. Stake your SOL to join!
+                </div>
+                <Btn onClick={stakeOnChain} disabled={staking || !wallet.publicKey}>
+                  {staking ? "Staking…" : `Stake ${(room.stake / 1e9).toFixed(3)} SOL`}
+                </Btn>
+              </div>
+            )}
+            {staked && (
+              <div style={{ color: "#4ade80", fontSize: 14, textAlign: "center", marginTop: 8 }}>
+                ✓ Staked! Waiting for game to start…
+              </div>
+            )}
+            {!room.matchId && (
+              <div style={{ color: "#6b7280", fontSize: 13, textAlign: "center" }}>
+                Waiting for host to start…
+              </div>
+            )}
           </div>
         )}
 
@@ -140,7 +222,7 @@ export default function Player() {
               <>
                 <div style={{ ...styles.cardTitle, color: "#4ade80", fontSize: 20 }}>Your Turn! 🎤</div>
                 <div style={{ color: "#9ca3af", fontSize: 14, margin: "12px 0" }}>
-                  Sing into the laptop mic. The host controls scoring.
+                  Loading the karaoke screen on this device…
                 </div>
                 <div style={styles.pulse} />
               </>
