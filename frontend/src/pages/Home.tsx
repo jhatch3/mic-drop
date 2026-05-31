@@ -14,6 +14,9 @@ export default function Home() {
         <div style={s.hero}>
           <h1 style={s.title}>Pitch Battle</h1>
           <p style={s.tagline}>Stake SOL. Sing or dance. Winner takes all.</p>
+          <button style={s.cta} onClick={() => { window.location.href = "/host"; }}>
+            🎤 Host a Game →
+          </button>
         </div>
 
         {/* Action cards */}
@@ -73,6 +76,18 @@ const s: Record<string, React.CSSProperties> = {
     fontSize: 18,
     color: "#6b7280",
     fontWeight: 400,
+  },
+  cta: {
+    marginTop: 28,
+    padding: "16px 40px",
+    fontSize: 18,
+    fontWeight: 800,
+    color: "#fff",
+    border: "none",
+    borderRadius: 14,
+    cursor: "pointer",
+    background: "linear-gradient(100deg, #ff2e97, #b537f2)",
+    boxShadow: "0 0 32px #ff2e9766",
   },
   cards: {
     display: "grid",
