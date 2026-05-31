@@ -86,41 +86,41 @@ async def host_ws(ws: WebSocket) -> None:
                             )
 
             async def gemini_to_browser() -> None:
-                async for m in session.receive():
-                    sc0 = m.server_content
-                    log.warning("host_ws RX gemini: tool=%s turn_complete=%s interrupted=%s "
-                                "in_tx=%s out_tx=%s model_turn=%s",
-                                bool(m.tool_call),
-                                getattr(sc0, "turn_complete", None) if sc0 else None,
-                                getattr(sc0, "interrupted", None) if sc0 else None,
-                                bool(sc0 and sc0.input_transcription and sc0.input_transcription.text),
-                                bool(sc0 and sc0.output_transcription and sc0.output_transcription.text),
-                                bool(sc0 and sc0.model_turn))
-                    if m.tool_call:
-                        for fc in m.tool_call.function_calls:
-                            response, action = await dispatch(fc.name, dict(fc.args or {}))
-                            await session.send_tool_response(
-                                function_responses=[types.FunctionResponse(
-                                    id=fc.id, name=fc.name, response=response)]
-                            )
-                            if action:
-                                await ws.send_json(action)
-                    sc = m.server_content
-                    if not sc:
-                        continue
-                    if sc.output_transcription and sc.output_transcription.text:
-                        await ws.send_json({"type": "caption", "role": "host",
-                                            "text": sc.output_transcription.text})
-                    if sc.input_transcription and sc.input_transcription.text:
-                        log.warning("host_ws Gemini heard you: %r", sc.input_transcription.text)
-                        await ws.send_json({"type": "caption", "role": "user",
-                                            "text": sc.input_transcription.text})
-                    if sc.model_turn:
-                        for p in sc.model_turn.parts:
-                            if p.inline_data and p.inline_data.data:
-                                await ws.send_bytes(p.inline_data.data)
-                    if sc.turn_complete:
-                        await ws.send_json({"type": "turn_complete"})
+                # session.receive() completes at each turn boundary — re-enter it in a
+                # loop so we keep forwarding the host's replies for the whole session
+                # (not just the opening turn). This was the bug: after the intro turn the
+                # old single-pass loop returned and stopped forwarding everything after.
+                while True:
+                    got = False
+                    async for m in session.receive():
+                        got = True
+                        if m.tool_call:
+                            for fc in m.tool_call.function_calls:
+                                response, action = await dispatch(fc.name, dict(fc.args or {}))
+                                await session.send_tool_response(
+                                    function_responses=[types.FunctionResponse(
+                                        id=fc.id, name=fc.name, response=response)]
+                                )
+                                if action:
+                                    await ws.send_json(action)
+                        sc = m.server_content
+                        if not sc:
+                            continue
+                        if sc.output_transcription and sc.output_transcription.text:
+                            await ws.send_json({"type": "caption", "role": "host",
+                                                "text": sc.output_transcription.text})
+                        if sc.input_transcription and sc.input_transcription.text:
+                            log.warning("host_ws Gemini heard you: %r", sc.input_transcription.text)
+                            await ws.send_json({"type": "caption", "role": "user",
+                                                "text": sc.input_transcription.text})
+                        if sc.model_turn:
+                            for p in sc.model_turn.parts:
+                                if p.inline_data and p.inline_data.data:
+                                    await ws.send_bytes(p.inline_data.data)
+                        if sc.turn_complete:
+                            await ws.send_json({"type": "turn_complete"})
+                    if not got:        # generator returned nothing → session closed
+                        break
 
             await asyncio.gather(browser_to_gemini(), gemini_to_browser())
 
