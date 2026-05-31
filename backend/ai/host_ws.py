@@ -50,6 +50,7 @@ async def host_ws(ws: WebSocket) -> None:
             )
 
             rx = {"chunks": 0, "bytes": 0}
+            auto = {"started": False}   # auto-start the match once, after the intro lands
 
             async def browser_to_gemini() -> None:
                 while True:
@@ -119,6 +120,16 @@ async def host_ws(ws: WebSocket) -> None:
                                     await ws.send_bytes(p.inline_data.data)
                         if sc.turn_complete:
                             await ws.send_json({"type": "turn_complete"})
+                            # After the intro ("...are we ready to start?") lands, beat for
+                            # a moment then auto-confirm so the host starts the game himself.
+                            if not auto["started"]:
+                                auto["started"] = True
+                                await asyncio.sleep(1.3)
+                                await session.send_client_content(
+                                    turns=types.Content(role="user", parts=[types.Part(
+                                        text="Yes, the players are ready — let's start the game!")]),
+                                    turn_complete=True,
+                                )
                     if not got:        # generator returned nothing → session closed
                         break
 
