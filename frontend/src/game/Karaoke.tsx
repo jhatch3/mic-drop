@@ -391,14 +391,20 @@ export default function Karaoke({ song = DEFAULT_SONG, playerLabel, onFinish, au
         {/* Score badge */}
         <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
           {micOn && <div style={{ fontSize: 11, color: "#f87171", background: "#f8717115", border: "1px solid #f8717130", borderRadius: 20, padding: "3px 10px" }}>● REC</div>}
-          <button onClick={restart} style={{ background: "transparent", border: "1px solid #1f2937", borderRadius: 10, color: "#6b7280", padding: "8px 14px", cursor: "pointer", fontSize: 18 }}>↺</button>
-          <button onClick={togglePlay} style={{ background: playing ? "#1f2937" : "linear-gradient(135deg,#7c3aed,#6d28d9)", border: "none", borderRadius: 10, color: "#fff", padding: "10px 22px", cursor: "pointer", fontWeight: 700, fontSize: 14 }}>
-            {playing ? "⏸ Pause" : "▶ Sing"}
-          </button>
-          {onFinish && (
-            <button onClick={finishTurn} style={{ background: "linear-gradient(135deg,#16a34a,#15803d)", border: "none", borderRadius: 10, color: "#fff", padding: "10px 18px", cursor: "pointer", fontWeight: 700, fontSize: 14 }}>
-              Finish turn →
-            </button>
+          {/* Autonomous mode (AI host): no manual controls — the song plays and the turn
+              auto-finishes when it ends. Manual controls only show outside the game. */}
+          {!autoPlay && (
+            <>
+              <button onClick={restart} style={{ background: "transparent", border: "1px solid #1f2937", borderRadius: 10, color: "#6b7280", padding: "8px 14px", cursor: "pointer", fontSize: 18 }}>↺</button>
+              <button onClick={togglePlay} style={{ background: playing ? "#1f2937" : "linear-gradient(135deg,#7c3aed,#6d28d9)", border: "none", borderRadius: 10, color: "#fff", padding: "10px 22px", cursor: "pointer", fontWeight: 700, fontSize: 14 }}>
+                {playing ? "⏸ Pause" : "▶ Sing"}
+              </button>
+              {onFinish && (
+                <button onClick={finishTurn} style={{ background: "linear-gradient(135deg,#16a34a,#15803d)", border: "none", borderRadius: 10, color: "#fff", padding: "10px 18px", cursor: "pointer", fontWeight: 700, fontSize: 14 }}>
+                  Finish turn →
+                </button>
+              )}
+            </>
           )}
         </div>
       </div>

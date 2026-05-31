@@ -36,7 +36,7 @@ export default function KaraokeHost() {
     () => new URLSearchParams(window.location.search).get("stake") ?? "0.001"
   );
   const { room, phase, currentTurn, log, addLog, createRoom, beginGame, submitScore } = useGameRoom();
-  const { busy, createAndStake, settle } = useEscrow(addLog);
+  const { busy, createAndStake } = useEscrow(addLog);
 
   // Recorded takes → scored together on the backend (80% lyrics + 20% pitch).
   const takesRef = useRef<{ p1?: Blob; p2?: Blob }>({});
@@ -48,15 +48,16 @@ export default function KaraokeHost() {
     createRoom(wallet.publicKey.toBase58(), Math.floor(parseFloat(stakeSOL) * LAMPORTS_PER_SOL), "karaoke");
   }, [wallet.publicKey, stakeSOL, createRoom]);
 
+  // The host starts the match (on "ready"). Staking is best-effort so the game
+  // always begins — never blocks the autonomous flow on a wallet.
   const handleStartGame = useCallback(async () => {
-    if (!room || room.players.length < 2) return;
-    try {
-      await createAndStake(room.code, room.players[1].wallet, room.stake);
-      beginGame(room.code);
-    } catch (e: any) {
-      addLog("Error: " + e.message);
+    if (!room || phase !== "waiting") return;
+    if (room.players.length >= 2) {
+      try { await createAndStake(room.code, room.players[1].wallet, room.stake); }
+      catch (e: any) { addLog("stake skipped: " + e.message); }
     }
-  }, [room, createAndStake, beginGame, addLog]);
+    beginGame(room.code);
+  }, [room, phase, createAndStake, beginGame, addLog]);
 
   // ── AI game-show host: greets, asks "ready?", you answer by voice, he starts the game ──
   const startRef = useRef(handleStartGame);
@@ -77,6 +78,11 @@ export default function KaraokeHost() {
     if (!room || !p1 || !p2) return;
     setScoring(true);
     addLog("Scoring both takes (lyrics + pitch)…");
+    // Keep the room entertained while the backend scores (~15-20s).
+    voice.tell("Both singers are done! While the judges tally the scores, keep the crowd "
+      + "entertained: share a fun fact about the song or artist, and explain how scoring "
+      + "works — 80% on singing the right lyrics in time, 20% on pitch. Stall for time, "
+      + "build suspense, but do NOT announce a winner yet.");
     const fd = new FormData();
     fd.append("match_id", room.matchId || room.code);
     fd.append("song_id", "firework");
@@ -163,14 +169,9 @@ export default function KaraokeHost() {
                 </div>
               ))}
             </div>
-            {room.players.length === 2 && (
-              <NeonButton onClick={handleStartGame} disabled={busy} variant="lime" size="lg" className="mt-4 w-full">
-                {busy ? "…" : "🔒 Start Game & Lock Wagers"}
-              </NeonButton>
-            )}
-            <div className={`${labelCls} mt-3 normal-case tracking-normal`}>
+            <div className={`${labelCls} mt-4 normal-case tracking-normal`}>
               {voice.listening
-                ? "🎙 Host is listening — say “yes, we’re ready!”"
+                ? "🎙 Host is listening — say “yes, we’re ready!” and he'll start the game"
                 : voice.connected
                   ? "🎙 The AI host is introducing the game…"
                   : "🎙 Bringing in the AI host…"}
@@ -227,11 +228,6 @@ export default function KaraokeHost() {
               </>
             ) : !scoring && (
               <div className="font-mono text-sm text-muted-foreground">Waiting for scores…</div>
-            )}
-            {room.winner && room.matchId && (
-              <NeonButton onClick={() => settle(room.matchId!, room.winner!)} disabled={busy} variant="lime" size="lg" className="w-full">
-                {busy ? "…" : "💸 Pay Winner on Solana"}
-              </NeonButton>
             )}
           </CRTCard>
         )}
