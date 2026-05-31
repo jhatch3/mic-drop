@@ -165,7 +165,7 @@ function downsampleTo16k(f32, inRate) {
   }
   return out;
 }
-let sentChunks = 0, micOn = false, talking = false;
+let sentChunks = 0, micOn = false;   // (talking is declared up top)
 const setMicState = (on) => {
   micOn = on;
   $("micstate").textContent = on ? "🎙 mic: ON" : "🎙 mic: off";
