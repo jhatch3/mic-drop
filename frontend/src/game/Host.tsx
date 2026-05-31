@@ -122,6 +122,8 @@ export default function Host() {
   const [log, setLog] = useState<string[]>([]);
   const [busy, setBusy] = useState(false);
   const [currentTurn, setCurrentTurn] = useState<{ player: string; wallet: string } | null>(null);
+  const [singer, setSinger] = useState<"p1" | "p2">("p1");
+  const [p1Score, setP1Score] = useState<KaraokeResult | null>(null);
   const [finish, setFinish] = useState<FinishResponse | null>(null);
   const [waitingForP2Stake, setWaitingForP2Stake] = useState(false);
 
@@ -513,19 +515,43 @@ export default function Host() {
           </div>
         )}
 
-        {/* Gaming — full karaoke screen */}
+        {/* Gaming — full karaoke screen, one turn at a time */}
         {phase === "gaming" && room && (
-          <Karaoke
-            playerLabel={`${room.players[0]?.wallet.slice(0, 6)}… vs ${room.players[1]?.wallet.slice(0, 6)}…`}
-            onFinish={(result: KaraokeResult) => {
-              addLog(`Song done — score: ${result.score}/100 (${result.hits}/${result.scored} hits)`);
-              // Submit score for both players (same mic, same score for now)
-              socket.emit("score:submit", { code: room.code, wallet: room.players[0].wallet, score: result.score });
-              socket.emit("score:submit", { code: room.code, wallet: room.players[1]?.wallet, score: result.score });
-              setPhase("scoring");
-              void finishMatch();
-            }}
-          />
+          <div>
+            <div style={{ ...styles.card, marginBottom: 8, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+              <div>
+                <div style={styles.cardTitle}>
+                  {singer === "p1" ? "🎤 P1's Turn" : "🎤 P2's Turn"}
+                </div>
+                <div style={{ color: "#6b7280", fontSize: 12, marginTop: 2 }}>
+                  {singer === "p1" ? room.players[0]?.wallet.slice(0, 10) : room.players[1]?.wallet.slice(0, 10)}…
+                </div>
+              </div>
+              {p1Score && (
+                <div style={{ textAlign: "right" }}>
+                  <div style={{ color: "#6b7280", fontSize: 11 }}>P1 score</div>
+                  <div style={{ color: "#4ade80", fontWeight: 700, fontSize: 20 }}>{p1Score.score}</div>
+                </div>
+              )}
+            </div>
+            <Karaoke
+              key={singer}
+              playerLabel={singer === "p1" ? "P1" : "P2"}
+              onFinish={(result: KaraokeResult) => {
+                if (singer === "p1") {
+                  setP1Score(result);
+                  setSinger("p2");
+                  socket.emit("score:submit", { code: room.code, wallet: room.players[0].wallet, score: result.score });
+                  addLog(`P1 done — score: ${result.score}/100. P2's turn!`);
+                } else {
+                  socket.emit("score:submit", { code: room.code, wallet: room.players[1]?.wallet, score: result.score });
+                  addLog(`P2 done — score: ${result.score}/100. Scoring…`);
+                  setPhase("scoring");
+                  void finishMatch();
+                }
+              }}
+            />
+          </div>
         )}
 
         {/* Scoring */}
