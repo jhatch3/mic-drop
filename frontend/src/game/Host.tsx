@@ -500,8 +500,8 @@ export default function Host() {
             <div style={styles.label}>Players joined: {room.players.length} / 2</div>
             {room.players.map((p) => (
               <div key={p.wallet} style={styles.playerRow}>
-                <span style={{ color: p.staked ? "#4ade80" : "#facc15" }}>
-                  {p.staked ? "✓ Staked" : "○ Not staked"}
+                <span style={{ color: (p.staked || (waitingForP2Stake && p.wallet === wallet.publicKey?.toBase58())) ? "#4ade80" : "#facc15" }}>
+                  {(p.staked || (waitingForP2Stake && p.wallet === wallet.publicKey?.toBase58())) ? "✓ Staked" : "○ Not staked"}
                 </span>{" "}{p.name} — {p.wallet.slice(0, 10)}…
               </div>
             ))}
