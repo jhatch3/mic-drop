@@ -16,9 +16,9 @@ function createRoom({ hostWallet, stake, hostSocketId }) {
     hostWallet,
     stake,          // lamports
     players: [
-      { wallet: hostWallet, socketId: hostSocketId, name: "P1", score: null },
+      { wallet: hostWallet, socketId: hostSocketId, name: "P1", score: null, staked: false },
     ],
-    state: "waiting", // waiting | p1_singing | p2_singing | finished
+    state: "waiting", // waiting | staking | p1_singing | p2_singing | finished
     matchId: null,
     winner: null,
     createdAt: Date.now(),
@@ -34,7 +34,7 @@ function joinRoom(code, { wallet, socketId }) {
   if (room.players.length >= 2) return { error: "Room is full" };
   if (room.players[0].wallet === wallet) return { error: "Already in room" };
 
-  room.players.push({ wallet, socketId, name: "P2", score: null });
+  room.players.push({ wallet, socketId, name: "P2", score: null, staked: false });
   return { room };
 }
 
@@ -86,8 +86,20 @@ function submitScore(code, wallet, score) {
   return { error: "Not your turn" };
 }
 
+// Mark a player as having staked on-chain. Returns { room, bothStaked }
+function markStaked(code, wallet) {
+  const room = rooms.get(code);
+  if (!room) return { error: "Room not found" };
+  const player = room.players.find(p => p.wallet === wallet);
+  if (!player) return { error: "Not in room" };
+  player.staked = true;
+  const bothStaked = room.players.length === 2 && room.players.every(p => p.staked);
+  if (bothStaked) room.state = "staking_complete";
+  return { room, bothStaked };
+}
+
 function deleteRoom(code) {
   rooms.delete(code);
 }
 
-module.exports = { createRoom, joinRoom, getRoom, getRoomBySocket, setMatchId, startGame, submitScore, deleteRoom };
+module.exports = { createRoom, joinRoom, getRoom, getRoomBySocket, setMatchId, startGame, submitScore, markStaked, deleteRoom };

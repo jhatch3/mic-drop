@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import { useWallet, useConnection } from "@solana/wallet-adapter-react";
 import { WalletMultiButton } from "@solana/wallet-adapter-react-ui";
 import { AnchorProvider, Program, BN } from "@coral-xyz/anchor";
-import { Keypair, PublicKey, LAMPORTS_PER_SOL, SystemProgram, Transaction } from "@solana/web3.js";
+import { PublicKey, LAMPORTS_PER_SOL, SystemProgram } from "@solana/web3.js";
 import QRCode from "react-qr-code";
 import { getSocket } from "./socket";
 import type { RoomState } from "./types";
@@ -15,22 +15,6 @@ const FEE_BPS            = 100;  // 1%
 
 const API_BASE = import.meta.env.VITE_API_BASE ?? "";  // "" → use Vite proxy
 
-// ─── Demo P2 stake keypair ──────────────────────────────────────────────────
-// MVP staking model (contracts/DIVERGENCES.md #3c): the laptop holds P2's
-// keypair and stakes on its behalf so the match reaches `Staked` and the backend
-// oracle can settle. The phone wallet stays identity/display only. We reuse the
-// SAME storage key as the Solana test UI (App.tsx → "pb_p2_keypair") so this key
-// is the one you already funded once on devnet — no fresh airdrop per game.
-function persistedKeypair(storageKey: string): Keypair {
-  try {
-    const saved = localStorage.getItem(storageKey);
-    if (saved) return Keypair.fromSecretKey(Uint8Array.from(JSON.parse(saved)));
-  } catch { /* fall through and regenerate */ }
-  const kp = Keypair.generate();
-  localStorage.setItem(storageKey, JSON.stringify(Array.from(kp.secretKey)));
-  return kp;
-}
-const demoP2 = persistedKeypair("pb_p2_keypair");
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 type HostPhase = "lobby" | "waiting" | "gaming" | "scoring" | "finished";
@@ -123,7 +107,7 @@ export default function Host() {
   const [busy, setBusy] = useState(false);
   const [currentTurn, setCurrentTurn] = useState<{ player: string; wallet: string } | null>(null);
   const [finish, setFinish] = useState<FinishResponse | null>(null);
-  const [p2Bal, setP2Bal] = useState<number | null>(null);
+  const [waitingForP2Stake, setWaitingForP2Stake] = useState(false);
 
   // Audio capture (laptop owns the mic — phones never record)
   const recorderRef = useRef<MediaRecorder | null>(null);
@@ -154,11 +138,6 @@ export default function Host() {
       } catch (e: any) {
         addLog(`songs: ${e.message}`);
       }
-      try {
-        const bal = await connection.getBalance(demoP2.publicKey);
-        setP2Bal(bal / LAMPORTS_PER_SOL);
-        addLog(`Demo P2 key ${demoP2.publicKey.toBase58().slice(0, 8)}… — ${(bal / LAMPORTS_PER_SOL).toFixed(3)} SOL`);
-      } catch { /* devnet unreachable — checked again at stake time */ }
     })();
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -190,6 +169,12 @@ export default function Host() {
       // Server's tally is bogus (we pushed 0s to drive state); ignore it.
       // The real result arrives from POST /api/match/finish below.
     });
+    socket.on("stakes:ready", (r: RoomState) => {
+      setRoom(r);
+      setWaitingForP2Stake(false);
+      addLog("Both players staked ✓ — starting game");
+      socket.emit("game:start", { code: r.code });
+    });
     socket.on("error", ({ msg }: { msg: string }) => addLog(`Error: ${msg}`));
 
     return () => { socket.removeAllListeners(); };
@@ -214,49 +199,6 @@ export default function Host() {
     setBusy(false);
   }, [wallet.publicKey, stakeSOL, socket, selectedSongId]);
 
-  // Fund the demo P2 key so it can cover its stake. Faucet-FIRST (free), then
-  // fall back to a direct transfer from the connected P1 wallet (faucet-INDEPENDENT
-  // — P1 is a real funded Phantom wallet, so this always works even when the
-  // devnet faucet is dry/rate-limited). Throws only if BOTH paths fail.
-  const fundDemoP2 = useCallback(async (program: Program) => {
-    const need = lamportsNeededFor(room!.stake);
-    let bal = await connection.getBalance(demoP2.publicKey);
-    addLog(`[fund] P2 balance=${(bal / LAMPORTS_PER_SOL).toFixed(4)} SOL, need=${(need / LAMPORTS_PER_SOL).toFixed(4)} SOL`);
-    if (bal >= need) { addLog("[fund] P2 already funded ✓ (no faucet/transfer needed)"); return; }
-
-    // 1) Try the faucet (best-effort, short).
-    addLog("[fund] P2 low — trying devnet airdrop (faucet)…");
-    try {
-      const sig = await connection.requestAirdrop(demoP2.publicKey, LAMPORTS_PER_SOL);
-      await connection.confirmTransaction(sig, "confirmed");
-      bal = await connection.getBalance(demoP2.publicKey);
-      addLog(`[fund] airdrop landed ✓ P2 balance=${(bal / LAMPORTS_PER_SOL).toFixed(4)} SOL`);
-    } catch (e: any) {
-      addLog(`[fund] airdrop failed → ${errDetail(e)}`);
-    }
-    if (bal >= need) return;
-
-    // 2) Fallback: transfer from the connected P1 wallet. This needs P1 to sign
-    //    one extra Phantom popup, but it does NOT touch the faucet.
-    const topUp = need - bal;
-    const p1Bal = await connection.getBalance(wallet.publicKey!);
-    addLog(`[fund] faucet unavailable — transferring ${(topUp / LAMPORTS_PER_SOL).toFixed(4)} SOL from P1 (P1 has ${(p1Bal / LAMPORTS_PER_SOL).toFixed(4)} SOL). Approve in Phantom…`);
-    if (p1Bal < topUp + 5_000) {
-      throw new Error(`P1 wallet too low to fund P2 (has ${(p1Bal / LAMPORTS_PER_SOL).toFixed(4)} SOL, needs ${(topUp / LAMPORTS_PER_SOL).toFixed(4)} + fee). Fund your Phantom wallet on devnet.`);
-    }
-    const tx = new Transaction().add(
-      SystemProgram.transfer({
-        fromPubkey: wallet.publicKey!,
-        toPubkey: demoP2.publicKey,
-        lamports: topUp,
-      }),
-    );
-    // AnchorProvider.sendAndConfirm signs with the connected wallet (P1).
-    const sig = await (program.provider as AnchorProvider).sendAndConfirm(tx);
-    bal = await connection.getBalance(demoP2.publicKey);
-    addLog(`[fund] P1→P2 transfer confirmed ✓ (${sig.slice(0, 12)}…) P2 balance=${(bal / LAMPORTS_PER_SOL).toFixed(4)} SOL`);
-    if (bal < need) throw new Error(`P2 still underfunded after transfer (${(bal / LAMPORTS_PER_SOL).toFixed(4)} SOL).`);
-  }, [room, connection, wallet.publicKey]);
 
   // ── Start game: create on-chain match + stake P1, then kick off turns ───
   const startGame = useCallback(async () => {
@@ -305,8 +247,9 @@ export default function Host() {
         step = "createMatch";
         addLog("[createMatch] sending… (approve in Phantom)");
         const t0 = performance.now();
+        const p2Pubkey = new PublicKey(room.players[1].wallet);
         const sig = await program.methods
-          .createMatch(matchId, new BN(room.stake), demoP2.publicKey, oraclePk, treasury, FEE_BPS)
+          .createMatch(matchId, new BN(room.stake), p2Pubkey, oraclePk, treasury, FEE_BPS)
           .accounts({
             playerOne: wallet.publicKey,
             matchAccount: mPda,
@@ -334,33 +277,12 @@ export default function Host() {
         addLog(`[stakeP1] ✓ ${sig.slice(0, 12)}… (${Math.round(performance.now() - t0)}ms)`);
       }
 
-      // 3) Fund the demo P2 key (faucet → P1-transfer fallback).
-      step = "fundDemoP2";
-      await fundDemoP2(program);
-
-      // 4) Stake P2 (laptop-held demo key signs locally — no Phantom popup).
-      step = "stakeP2";
-      addLog("[stakeP2] sending… (demo key signs locally)");
-      {
-        const t0 = performance.now();
-        const sig = await program.methods
-          .stake(matchId)
-          .accounts({
-            signer: demoP2.publicKey,
-            matchAccount: mPda,
-            vault: vPda,
-            systemProgram: SystemProgram.programId,
-          })
-          .signers([demoP2])
-          .rpc();
-        addLog(`[stakeP2] ✓ ${sig.slice(0, 12)}… (${Math.round(performance.now() - t0)}ms)`);
-      }
-
-      setP2Bal((await connection.getBalance(demoP2.publicKey)) / LAMPORTS_PER_SOL);
-      addLog("✅ Match fully staked — backend oracle can settle. Starting turns…");
-
+      // 3) Tell the server P1 has staked + set the match ID so P2 can see it.
       socket.emit("match:set_id", { code: room.code, matchId });
-      socket.emit("game:start", { code: room.code });
+      socket.emit("player:staked", { code: room.code, wallet: wallet.publicKey.toBase58() });
+      setWaitingForP2Stake(true);
+      addLog("✅ P1 staked. Waiting for P2 to stake from their wallet…");
+      // Game starts automatically when server fires stakes:ready (both staked).
     } catch (e: any) {
       // Mirror to devtools console with the full object for stack/inspection.
       // eslint-disable-next-line no-console
@@ -368,7 +290,7 @@ export default function Host() {
       addLog(`❌ FAILED at step "${step}" → ${errDetail(e)}`);
     }
     setBusy(false);
-  }, [room, wallet.publicKey, oracle, selectedSongId, getProgram, socket, connection, fundDemoP2]);
+  }, [room, wallet.publicKey, oracle, selectedSongId, getProgram, socket, connection]);
 
   // ── Mic capture ─────────────────────────────────────────────────────────
   async function startRecording() {
@@ -433,7 +355,7 @@ export default function Host() {
     fd.append("p1_pubkey", room.players[0].wallet);
     // The demo key is the on-chain player_two + payout destination, so it must be
     // what the oracle settles to and what Snowflake records for P2.
-    fd.append("p2_pubkey", demoP2.publicKey.toBase58());
+    fd.append("p2_pubkey", room.players[1]?.wallet ?? "");
     fd.append("stake_lamports", String(room.stake));
     fd.append("fee_bps", String(FEE_BPS));
     fd.append("take_p1", takesRef.current.p1!, "p1.webm");
@@ -525,12 +447,6 @@ export default function Host() {
               </div>
             )}
 
-            {oracle?.escrow_mode === "devnet" && (
-              <div style={{ ...styles.label, marginBottom: 8, color: p2Bal !== null && p2Bal < 0.015 ? "#f87171" : "#6b7280" }}>
-                Demo P2 stake key: <span style={styles.mono}>{demoP2.publicKey.toBase58().slice(0, 16)}…</span>
-                {p2Bal !== null && ` (${p2Bal.toFixed(3)} SOL)`}
-              </div>
-            )}
 
             <Btn
               onClick={createRoom}
@@ -558,13 +474,20 @@ export default function Host() {
             <div style={styles.label}>Players joined: {room.players.length} / 2</div>
             {room.players.map((p) => (
               <div key={p.wallet} style={styles.playerRow}>
-                <span style={{ color: "#4ade80" }}>✓</span> {p.name} — {p.wallet.slice(0, 10)}…
+                <span style={{ color: p.staked ? "#4ade80" : "#facc15" }}>
+                  {p.staked ? "✓ Staked" : "○ Not staked"}
+                </span>{" "}{p.name} — {p.wallet.slice(0, 10)}…
               </div>
             ))}
-            {room.players.length === 2 && (
+            {room.players.length === 2 && !waitingForP2Stake && (
               <Btn onClick={startGame} busy={busy} color="#8b5cf6" style={{ marginTop: 16 }}>
                 Start Game &amp; Lock Wagers
               </Btn>
+            )}
+            {waitingForP2Stake && (
+              <div style={{ marginTop: 16, color: "#facc15", fontSize: 14, textAlign: "center" }}>
+                ⏳ Waiting for P2 to stake from their phone…
+              </div>
             )}
           </div>
         )}
