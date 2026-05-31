@@ -143,7 +143,7 @@ function openWS() {
       const lvl = m.peak < 200 ? `⚠️ SILENT (peak ${m.peak}) — wrong/dead mic` : `🎙 signal OK (peak ${m.peak})`;
       setStatus(`backend got ${m.rx_chunks} chunks · ${lvl}`);
     }
-    else if (m.type === "turn_complete") finalizeCaptions();
+    else if (m.type === "turn_complete") { finalizeCaptions(); maybeStartPendingTake().catch((e) => logLine("take start failed: " + e)); }
   };
 }
 
@@ -227,19 +227,30 @@ function endTake() {
     rec.stop();
   });
 }
+// Recording must begin only AFTER the host finishes announcing the turn (otherwise it
+// captures his own voice and starts before the player is cued). So turn commands just
+// arm a pending take; it actually starts on the next turn_complete.
+let pendingTake = null;
 async function handleGameCommand(cmd) {
   if (cmd === "start_game") {                 // match begins — mic on, fresh takes
     match = { id: "m-" + Date.now().toString(36), takes: {}, rec: null, chunks: [], singing: null };
     if (!micOn) await startMic();
   } else if (cmd === "start_p1_turn") {
-    await beginTake("p1");
+    if (!micOn) await startMic();
+    pendingTake = "p1";                       // arm; begins when the host stops talking
   } else if (cmd === "start_p2_turn") {
     await endTake();                          // save P1
-    await beginTake("p2");
+    pendingTake = "p2";
   } else if (cmd === "end_game") {
-    await endTake();                          // save P2
+    pendingTake = null;
+    await endTake();                          // save the last take
     await scoreMatch();                       // real /api/match/finish → feed result to bot
   }
+}
+async function maybeStartPendingTake() {
+  if (!pendingTake) return;
+  const p = pendingTake; pendingTake = null;
+  await beginTake(p);
 }
 async function scoreMatch() {
   if (!match.takes.p1 || !match.takes.p2) { logLine("missing a take — can't score"); return; }
