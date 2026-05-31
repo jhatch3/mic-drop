@@ -5,10 +5,11 @@ The one call the laptop makes at the end of a match:
     POST /api/match/finish
       match_id, song_id, p1_pubkey, p2_pubkey, stake_lamports, fee_bps
       take_p1 (file), take_p2 (file)
+      gamemode (default "karaoke"), p1_score / p2_score (dance mode)
 
 Fan-out:
-  1. Score both takes concurrently via scoring.scorer.score_take.
-  2. Pick winner (pitch score, tiebreak by frames_hit).
+  1. Score both takes concurrently (karaoke) or use provided scores (dance).
+  2. Pick winner (score, tiebreak by frames_hit).
   3. Settle on Solana (devnet) or stub a tx string (mock) — concurrent with TTS.
   4. ElevenLabs MC voice → save under /assets/mc/<match_id>.mp3.
   5. Persist the match row to Snowflake (best-effort).
@@ -165,18 +166,21 @@ async def handle_finish(
     song_id: str,
     p1_pubkey: str,
     p2_pubkey: str,
-    p1_bytes: bytes,
-    p2_bytes: bytes,
+    p1_bytes: bytes | None = None,
+    p2_bytes: bytes | None = None,
     stake_lamports: int = 0,
     fee_bps: int = 0,
+    gamemode: str = "karaoke",
+    p1_score: int | None = None,
+    p2_score: int | None = None,
 ) -> dict[str, Any]:
-    # 1. Contour for the song (Snowflake-backed with local cache).
-    contour = get_contour(song_id)
+    if gamemode == "dance" and p1_score is not None and p2_score is not None:
+        s1: dict = {"song_id": song_id, "player_id": "p1", "score": p1_score, "frames_scored": 0, "frames_hit": p1_score}
+        s2: dict = {"song_id": song_id, "player_id": "p2", "score": p2_score, "frames_scored": 0, "frames_hit": p2_score}
+    else:
+        contour = get_contour(song_id)
+        s1, s2 = await _score_pair(p1_bytes, p2_bytes, contour)  # type: ignore[arg-type]
 
-    # 2. Score in parallel.
-    s1, s2 = await _score_pair(p1_bytes, p2_bytes, contour)
-
-    # 3. Winner + commentary text.
     winner = _pick_winner(s1, s2)
     commentary = roast_text(song_id, int(s1["score"]), int(s2["score"]), winner)
 
@@ -192,7 +196,6 @@ async def handle_finish(
     )
     mc_url = _save_mc(mc_audio, match_id)
 
-    # 5. Persist (off the request critical path? still synchronous but cheap).
     _persist(
         match_id=match_id,
         song_id=song_id,
@@ -205,7 +208,6 @@ async def handle_finish(
         payout_tx=payout_tx,
     )
 
-    # 6. Leaderboard snapshot to ship with the result.
     leaderboard = _safe_leaderboard()
 
     return {

@@ -17,6 +17,7 @@ from fastapi.staticfiles import StaticFiles
 
 from ai.router import router as ai_router
 from data.router import router as data_router
+from dance.router import router as dance_router
 from orchestration.router import router as orchestration_router
 from reference.router import router as reference_router
 from scoring.router import router as scoring_router
@@ -59,6 +60,7 @@ def live_page() -> FileResponse:
 
 
 # /api/*
+app.include_router(dance_router, prefix="/api")             # Dance: /api/dance/score
 app.include_router(scoring_router, prefix="/api")           # Stream B: /api/score
 app.include_router(transcription_router, prefix="/api")     # Stream D: /api/transcribe
 app.include_router(reference_router, prefix="/api")         # Stream D: lyrics ref

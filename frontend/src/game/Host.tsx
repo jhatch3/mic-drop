@@ -116,7 +116,9 @@ export default function Host() {
   const [songs, setSongs] = useState<Song[]>([]);
   const [selectedSongId, setSelectedSongId] = useState<string>("");
 
-  const [stakeSOL, setStakeSOL] = useState("0.01");
+  const [stakeSOL, setStakeSOL] = useState(
+    () => new URLSearchParams(window.location.search).get("stake") ?? "0.01"
+  );
   const [room, setRoom] = useState<RoomState | null>(null);
   const [phase, setPhase] = useState<HostPhase>("lobby");
   const [log, setLog] = useState<string[]>([]);
