@@ -68,6 +68,8 @@ export default function DanceHost() {
   const startRef = useRef<() => void>(() => {});
   const advanceRef = useRef<() => void>(() => {});
   const [pendingP2, setPendingP2] = useState(false);   // P1 done, awaiting host's start_p2_turn
+  const pendingP2Ref = useRef(false);
+  pendingP2Ref.current = pendingP2;
 
   // Who is dancing RIGHT NOW, driven locally (not by the server's async currentTurn) so the
   // dance + scoring fire at exactly the right moment — no race where scoring kicks off during
@@ -112,9 +114,18 @@ export default function DanceHost() {
   const voice = useVoiceHost({
     onHostCaption: (t) => revealDriverRef.current(t),   // reveal scores off his spoken count
     onCommand: (cmd) => {
-      const which = cmd === "start_game" || cmd === "start_p1_turn" ? "p1"
-        : cmd === "start_p2_turn" ? "p2" : null;
-      if (!which) return;   // end_game: scoring runs automatically once P2's take is in
+      // Guard by game state so a stray/early tool call can't jump turns: P1 only before any
+      // turn; P2 only once P1 is done and we're waiting on P2.
+      let which: "p1" | "p2" | null = null;
+      if (cmd === "start_game" || cmd === "start_p1_turn") {
+        if (singingRef.current || pendingP2Ref.current || finishRef.current) return;
+        which = "p1";
+      } else if (cmd === "start_p2_turn") {
+        if (!pendingP2Ref.current || singingRef.current) return;   // ignore if P1 not finished yet
+        which = "p2";
+      } else {
+        return;   // reveal_scores / end_game: reveal is caption-driven now
+      }
       pendingStartRef.current = which;
       // Normally the next turn_complete launches the countdown once the host stops talking.
       // If that signal never arrives (unusual tool/turn ordering), start anyway after a beat
