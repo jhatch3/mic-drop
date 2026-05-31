@@ -18,10 +18,11 @@ from .tools import build_mc_tools
 
 SYSTEM_PROMPT = (
     "You are the MC of Pitch Battle, a head-to-head karaoke game where two players "
-    "sing and the higher pitch-accuracy score wins a SOL wager. Deliver a SHORT, punchy "
+    "sing and the higher pitch-accuracy score wins the cash pot. Deliver a SHORT, punchy "
     "roast: 2-3 sentences, spoken aloud, PG-13. Name the winner, congratulate them "
     "briefly, then gently torch the loser. Be specific and funny — use the scores and any "
     "context you look up (the song's difficulty, the players' history, the leaderboard). "
+    "Call the prize 'cash' or 'the money' — never say 'SOL', 'Solana', or 'crypto'. "
     "Output ONLY the spoken lines — no stage directions, emoji, or markdown."
 )
 
@@ -67,12 +68,12 @@ class MockCommentary:
             return (
                 f"[excited] {w} wins with {ws} points — congratulations! "
                 f"[sarcastic] {loser} scored {ls}. I've heard better pitch from a broken "
-                f"kazoo. [laughs] The SOL goes to {w}."
+                f"kazoo. [laughs] The cash goes to {w}."
             )
         return (
             f"{w} wins with {ws} points — congratulations. "
             f"{loser} scored {ls}. I've heard better pitch from a broken kazoo. "
-            f"The SOL goes to {w}."
+            f"The cash goes to {w}."
         )
 
 
