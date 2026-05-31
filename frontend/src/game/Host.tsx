@@ -303,12 +303,11 @@ export default function Host() {
         addLog(`[stakeP1] ✓ ${sig.slice(0, 12)}… (${Math.round(performance.now() - t0)}ms)`);
       }
 
-      // 3) Tell the server P1 has staked + set the match ID so P2 can see it.
+      // 3) Set match ID so P2 can see it, then start the game immediately.
       socket.emit("match:set_id", { code: room.code, matchId });
       socket.emit("player:staked", { code: room.code, wallet: wallet.publicKey.toBase58() });
-      setWaitingForP2Stake(true);
-      addLog("✅ P1 staked. Waiting for P2 to stake from their wallet…");
-      // Game starts automatically when server fires stakes:ready (both staked).
+      socket.emit("game:start", { code: room.code });
+      addLog("✅ P1 staked — game starting!");
     } catch (e: any) {
       // Mirror to devtools console with the full object for stack/inspection.
       // eslint-disable-next-line no-console
@@ -505,29 +504,10 @@ export default function Host() {
                 </span>{" "}{p.name} — {p.wallet.slice(0, 10)}…
               </div>
             ))}
-            {room.players.length === 2 && !waitingForP2Stake && (
+            {room.players.length === 2 && (
               <Btn onClick={startGame} busy={busy} color="#8b5cf6" style={{ marginTop: 16 }}>
                 Start Game &amp; Lock Wagers
               </Btn>
-            )}
-            {waitingForP2Stake && (
-              <div style={{ marginTop: 16 }}>
-                <div style={{ color: "#facc15", fontSize: 14, textAlign: "center", marginBottom: 12 }}>
-                  ⏳ Waiting for P2 to stake from their phone…
-                </div>
-                <Btn
-                  onClick={() => {
-                    socket.emit("match:set_id", { code: room!.code, matchId: room!.code });
-                    socket.emit("game:start", { code: room!.code });
-                    setWaitingForP2Stake(false);
-                  }}
-                  busy={false}
-                  color="#374151"
-                  style={{ fontSize: 12 }}
-                >
-                  P2 staked on their phone? Start manually →
-                </Btn>
-              </div>
             )}
           </div>
         )}
