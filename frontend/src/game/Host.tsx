@@ -6,6 +6,7 @@ import { PublicKey, LAMPORTS_PER_SOL, SystemProgram } from "@solana/web3.js";
 import QRCode from "react-qr-code";
 import { getSocket } from "./socket";
 import type { RoomState } from "./types";
+import Karaoke, { type KaraokeResult } from "./Karaoke";
 import IDL from "../idl/pitch_battle.json";
 
 // ─── Static config ────────────────────────────────────────────────────────────
@@ -512,24 +513,19 @@ export default function Host() {
           </div>
         )}
 
-        {/* Gaming */}
+        {/* Gaming — full karaoke screen */}
         {phase === "gaming" && room && (
-          <div style={styles.card}>
-            <div style={styles.cardTitle}>
-              {currentTurn ? `🔴 ${currentTurn.player} singing…` : "Get Ready"}
-            </div>
-            {currentTurn && (
-              <>
-                <div style={{ color: "#9ca3af", fontSize: 13, margin: "12px 0" }}>
-                  {currentTurn.wallet.slice(0, 10)}… — recording from this laptop's mic
-                </div>
-                <Btn onClick={endTurn} busy={false} color="#4ade80">
-                  End {currentTurn.player} Turn
-                </Btn>
-              </>
-            )}
-            <div style={{ marginTop: 20, ...styles.label }}>Song: {selectedSongId}</div>
-          </div>
+          <Karaoke
+            playerLabel={`${room.players[0]?.wallet.slice(0, 6)}… vs ${room.players[1]?.wallet.slice(0, 6)}…`}
+            onFinish={(result: KaraokeResult) => {
+              addLog(`Song done — score: ${result.score}/100 (${result.hits}/${result.scored} hits)`);
+              // Submit score for both players (same mic, same score for now)
+              socket.emit("score:submit", { code: room.code, wallet: room.players[0].wallet, score: result.score });
+              socket.emit("score:submit", { code: room.code, wallet: room.players[1]?.wallet, score: result.score });
+              setPhase("scoring");
+              void finishMatch();
+            }}
+          />
         )}
 
         {/* Scoring */}
