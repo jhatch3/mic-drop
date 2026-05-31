@@ -24,7 +24,8 @@ import os
 from pathlib import Path
 from typing import Any
 
-from ai.mc_voice import roast_text, tts
+from ai.commentary import get_commentary
+from ai.mc_voice import tts
 from data.matches_store import get_leaderboard, insert_match
 from data.songs_store import get_contour
 from scoring.scorer import score_take
@@ -91,8 +92,12 @@ async def _settle(
         return f"settle-failed-{match_id[:8]}: {type(e).__name__}"
 
 
-async def _mc_audio_bytes(song_id: str, s1_score: int, s2_score: int, winner: str) -> bytes | None:
-    text = roast_text(song_id, s1_score, s2_score, winner)
+async def _commentary(song_id: str, s1_score: int, s2_score: int, winner: str) -> str:
+    return await get_commentary().generate(
+        song=song_id, p1_score=s1_score, p2_score=s2_score, winner=winner, players={})
+
+
+async def _mc_audio_bytes(text: str) -> bytes | None:
     audio = await tts(text)
     if audio:
         return audio
@@ -176,20 +181,20 @@ async def handle_finish(
     # 2. Score in parallel.
     s1, s2 = await _score_pair(p1_bytes, p2_bytes, contour)
 
-    # 3. Winner + commentary text.
+    # 3. Winner.
     winner = _pick_winner(s1, s2)
-    commentary = roast_text(song_id, int(s1["score"]), int(s2["score"]), winner)
 
-    # 4. Settle + TTS concurrently.
-    payout_tx, mc_audio = await asyncio.gather(
+    # 4. Commentary (async Gemini/mock) + settle concurrently, then voice the roast.
+    commentary, payout_tx = await asyncio.gather(
+        _commentary(song_id, int(s1["score"]), int(s2["score"]), winner),
         _settle(
             match_id=match_id,
             winner_label=winner,
             p1_pubkey=p1_pubkey,
             p2_pubkey=p2_pubkey,
         ),
-        _mc_audio_bytes(song_id, int(s1["score"]), int(s2["score"]), winner),
     )
+    mc_audio = await _mc_audio_bytes(commentary)
     mc_url = _save_mc(mc_audio, match_id)
 
     # 5. Persist (off the request critical path? still synchronous but cheap).

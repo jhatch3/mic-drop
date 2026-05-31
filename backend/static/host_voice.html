@@ -136,10 +136,7 @@ function openWS() {
     else if (m.type === "sfx") { scheduleSfx(m.name, m.duration); }
     else if (m.type === "game") {
       logLine(`🎮 game command: ${m.command}`);
-      // Mic stays OFF through the intro; turn it ON once the match actually starts.
-      if ((m.command === "start_game" || m.command === "start_p1_turn") && !micOn) {
-        startMic().catch((e) => logLine("mic on failed: " + e.name));
-      }
+      handleGameCommand(m.command).catch((e) => logLine("game cmd failed: " + (e.name || e)));
     }
     else if (m.type === "caption") streamCaption(m.role, m.text);
     else if (m.type === "debug") {
@@ -183,6 +180,7 @@ async function startMic() {
   sentChunks = 0;
   proc.onaudioprocess = (e) => {
     if (!ws || ws.readyState !== 1) return;
+    if (match.singing) return;   // during a take, record (MediaRecorder) but don't feed the bot
     const ds = downsampleTo16k(e.inputBuffer.getChannelData(0), inRate);
     const i16 = new Int16Array(ds.length);
     for (let i = 0; i < ds.length; i++) { const s = Math.max(-1, Math.min(1, ds[i])); i16[i] = s < 0 ? s * 32768 : s * 32767; }
@@ -196,6 +194,74 @@ function stopMic() {
   try { proc && (proc.onaudioprocess = null); micCtx && micCtx.close(); } catch {}
   try { micStream && micStream.getTracks().forEach((t) => t.stop()); } catch {}
   setMicState(false);
+}
+
+// ── Real scored match, driven by the host's tool calls ───────────────────────
+const SONG_ID = "firework";
+let match = { id: null, takes: {}, rec: null, chunks: [], singing: null };
+function recMime() {
+  for (const m of ["audio/webm;codecs=opus", "audio/webm", "audio/mp4"])
+    if (window.MediaRecorder && MediaRecorder.isTypeSupported(m)) return m;
+  return "";
+}
+async function beginTake(player) {
+  if (!micOn) { await startMic(); }                 // mic must be live to record
+  match.singing = player;                            // pause sending mic to the bot while singing
+  match.chunks = [];
+  match.rec = new MediaRecorder(micStream, { mimeType: recMime() });
+  match.rec.ondataavailable = (e) => { if (e.data.size) match.chunks.push(e.data); };
+  match.rec.start(200);
+  logLine(`🔴 recording ${player.toUpperCase()} — sing!`);
+  setStatus(`🔴 ${player.toUpperCase()} singing — recorded for scoring`);
+}
+function endTake() {
+  return new Promise((resolve) => {
+    const rec = match.rec, player = match.singing;
+    if (!rec || rec.state === "inactive") { match.singing = null; return resolve(); }
+    rec.onstop = () => {
+      match.takes[player] = new Blob(match.chunks, { type: rec.mimeType || "audio/webm" });
+      match.rec = null; match.singing = null;
+      logLine(`saved ${player} take (${Math.round(match.takes[player].size / 1024)} KB)`);
+      resolve();
+    };
+    rec.stop();
+  });
+}
+async function handleGameCommand(cmd) {
+  if (cmd === "start_game") {                 // match begins — mic on, fresh takes
+    match = { id: "m-" + Date.now().toString(36), takes: {}, rec: null, chunks: [], singing: null };
+    if (!micOn) await startMic();
+  } else if (cmd === "start_p1_turn") {
+    await beginTake("p1");
+  } else if (cmd === "start_p2_turn") {
+    await endTake();                          // save P1
+    await beginTake("p2");
+  } else if (cmd === "end_game") {
+    await endTake();                          // save P2
+    await scoreMatch();                       // real /api/match/finish → feed result to bot
+  }
+}
+async function scoreMatch() {
+  if (!match.takes.p1 || !match.takes.p2) { logLine("missing a take — can't score"); return; }
+  setStatus("scoring both takes on the backend…");
+  const fd = new FormData();
+  fd.append("match_id", match.id || ("m-" + Date.now().toString(36)));
+  fd.append("song_id", SONG_ID);
+  fd.append("p1_pubkey", "VoiceP1"); fd.append("p2_pubkey", "VoiceP2");
+  fd.append("take_p1", match.takes.p1, "p1.webm");
+  fd.append("take_p2", match.takes.p2, "p2.webm");
+  try {
+    const r = await fetch("/api/match/finish", { method: "POST", body: fd });
+    if (!r.ok) throw new Error(`HTTP ${r.status}: ${await r.text()}`);
+    const res = await r.json();
+    const s1 = res.scores?.[0]?.score ?? 0, s2 = res.scores?.[1]?.score ?? 0;
+    logLine(`🏁 SCORES — P1 ${s1} / P2 ${s2} · winner ${res.winner}`);
+    // Hand the real result back to the bot so he announces + roasts.
+    ws.send(JSON.stringify({ type: "text", text:
+      `The scores are in from the judges: Player 1 scored ${s1} out of 100, Player 2 scored ${s2}. ` +
+      `The winner is ${res.winner}. Announce the winner with big energy, play the applause sound, ` +
+      `then give the loser a short playful roast.` }));
+  } catch (e) { logLine("scoring failed: " + e.message); setStatus("scoring failed — see log"); }
 }
 
 // "Start show" = connect + hear the intro, mic OFF. Click again to end.
