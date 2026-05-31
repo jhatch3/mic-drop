@@ -136,6 +136,7 @@ export default function Host() {
   const [currentTurn, setCurrentTurn] = useState<{ player: string; wallet: string } | null>(null);
   const [finish, setFinish] = useState<FinishResponse | null>(null);
   const [p2Bal, setP2Bal] = useState<number | null>(null);
+  const [chatInput, setChatInput] = useState("");
 
   // Audio capture (laptop owns the mic — phones never record)
   const recorderRef = useRef<MediaRecorder | null>(null);
@@ -481,6 +482,14 @@ export default function Host() {
     onCaption: (role, text) => addLog(`${role === "host" ? "🎙" : "🧑"} ${text}`),
   });
 
+  const sendChat = useCallback(() => {
+    const t = chatInput.trim();
+    if (!t || !voice.connected) return;
+    voice.tell(t);
+    addLog(`🧑 ${t}`);
+    setChatInput("");
+  }, [chatInput, voice]);
+
   // Hype each turn through the live host.
   useEffect(() => {
     if (voice.connected && currentTurn)
@@ -726,6 +735,27 @@ export default function Host() {
                 ))}
               </div>
             )}
+          </CRTCard>
+        )}
+
+        {/* Chat with the AI host */}
+        {voice.connected && (
+          <CRTCard title="Talk to the host" glow="cyan" animate={false} className="mt-3">
+            <div className="flex gap-2">
+              <Input
+                value={chatInput}
+                onChange={(e) => setChatInput(e.target.value)}
+                onKeyDown={(e) => { if (e.key === "Enter") sendChat(); }}
+                placeholder="Say something to the host…"
+                className="font-body text-base"
+              />
+              <NeonButton onClick={sendChat} variant="cyan" disabled={!chatInput.trim()}>
+                Send
+              </NeonButton>
+            </div>
+            <div className="mt-1 text-xs text-muted-foreground/70">
+              He replies out loud; the transcript shows in the log below.
+            </div>
           </CRTCard>
         )}
 
