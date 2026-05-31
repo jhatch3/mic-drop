@@ -16,6 +16,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from ai.router import router as ai_router
+from ai.host_ws import router as host_ws_router
 from data.router import router as data_router
 from orchestration.router import router as orchestration_router
 from reference.router import router as reference_router
@@ -66,6 +67,12 @@ def mc_test_page() -> FileResponse:
     return FileResponse(_STATIC / "mc_test.html")
 
 
+@app.get("/host-voice")
+def host_voice_page() -> FileResponse:
+    """Talk to the live voice game-show host over /ws/host."""
+    return FileResponse(_STATIC / "host_voice.html")
+
+
 # /api/*
 app.include_router(scoring_router, prefix="/api")           # Stream B: /api/score
 app.include_router(transcription_router, prefix="/api")     # Stream D: /api/transcribe
@@ -86,6 +93,7 @@ except ImportError as e:
 
 # WS
 app.include_router(live_ws_router)  # /ws/live (no /api prefix)
+app.include_router(host_ws_router)  # /ws/host — real-time voice game-show host
 
 # Static: MC audio clips. Served at /mc-audio/<match_id>.mp3 + /mc-audio/fallback.mp3.
 app.mount("/mc-audio", StaticFiles(directory=_MC_DIR), name="mc-audio")

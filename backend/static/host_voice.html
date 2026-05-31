@@ -1,0 +1,138 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>MIC DROP — Voice Host</title>
+<style>
+  :root { color-scheme: dark; }
+  body { font-family: system-ui, sans-serif; max-width: 640px; margin: 36px auto; padding: 0 16px;
+         background: #0b0617; color: #f7f0ff; }
+  h1 { font-size: 1.3rem; }
+  button { font-size: 1rem; padding: 11px 20px; border-radius: 10px; border: 0; cursor: pointer;
+           font-weight: 600; }
+  #talk { background: linear-gradient(100deg,#ff2e97,#b537f2); color: #fff; }
+  #talk.live { background: #e63946; }
+  #talk:disabled { opacity: .5; cursor: default; }
+  .row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin: 14px 0; }
+  input[type=text] { flex: 1; min-width: 200px; background: #160a2b; color: #f7f0ff; border: 1px solid #3a2168;
+                     border-radius: 8px; padding: 9px 12px; font-size: 1rem; }
+  .pill { background: #160a2b; border: 1px solid #3a2168; border-radius: 8px; padding: 8px 12px; }
+  .status { color: #05d9e8; min-height: 1.2em; margin: 8px 0; }
+  .cap { margin: 6px 0; }
+  .cap .host { color: #ff6ec7; } .cap .user { color: #aaff00; }
+  #log { background: #120724; border: 1px solid #3a2168; border-radius: 8px; padding: 12px;
+         max-height: 240px; overflow-y: auto; font-size: .85rem; }
+  .muted { color: #b9a7e6; font-size: .82rem; }
+  code { color: #05d9e8; }
+</style>
+</head>
+<body>
+<h1>🎤 MIC DROP — talk to the host</h1>
+<p class="muted">Click <b>Start talking</b>, allow the mic, and just talk to the host. He hears you,
+replies in voice (~2s), and fires sound effects / runs the show via tools. <b>Use headphones</b>
+so he doesn't hear himself. Connects to <code>/ws/host</code> (Gemini Live + ElevenLabs SFX).</p>
+
+<div class="row">
+  <button id="talk">● Start talking</button>
+  <button id="greet" class="pill">🔊 Greet</button>
+  <span class="status" id="status">idle</span>
+</div>
+
+<div class="row">
+  <input type="text" id="say" placeholder="…or type to the host (no mic needed)" />
+  <button id="send" class="pill">Send</button>
+</div>
+
+<div id="caps"></div>
+<div id="log"></div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const setStatus = (t) => ($("status").textContent = t);
+const logLine = (t) => { const d = document.createElement("div"); d.textContent = t; $("log").prepend(d); };
+const caption = (role, t) => {
+  const d = document.createElement("div"); d.className = "cap";
+  d.innerHTML = `<span class="${role}">${role === "host" ? "🎙 Host" : "🧑 You"}:</span> ${t}`;
+  $("caps").prepend(d);
+};
+
+let ws, micCtx, playCtx, nextTime = 0, talking = false, micStream, proc;
+
+function playPCM24(arrayBuf) {
+  if (!playCtx) playCtx = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 24000 });
+  const i16 = new Int16Array(arrayBuf);
+  const f32 = new Float32Array(i16.length);
+  for (let i = 0; i < i16.length; i++) f32[i] = i16[i] / 32768;
+  const buf = playCtx.createBuffer(1, f32.length, 24000);
+  buf.copyToChannel(f32, 0);
+  const src = playCtx.createBufferSource();
+  src.buffer = buf; src.connect(playCtx.destination);
+  const t = Math.max(playCtx.currentTime + 0.02, nextTime);
+  src.start(t); nextTime = t + buf.duration;
+}
+
+function openWS() {
+  const proto = location.protocol === "https:" ? "wss" : "ws";
+  ws = new WebSocket(`${proto}://${location.host}/ws/host`);
+  ws.binaryType = "arraybuffer";
+  ws.onopen = () => setStatus("connecting host…");
+  ws.onclose = () => { setStatus("disconnected"); stopMic(); };
+  ws.onerror = () => setStatus("ws error");
+  ws.onmessage = (ev) => {
+    if (ev.data instanceof ArrayBuffer) { playPCM24(ev.data); return; }
+    let m; try { m = JSON.parse(ev.data); } catch { return; }
+    if (m.type === "status") setStatus(m.msg);
+    else if (m.type === "sfx") { logLine(`🔊 SFX: ${m.name}`); new Audio(`/sfx-audio/${m.name}.mp3`).play().catch(()=>{}); }
+    else if (m.type === "game") logLine(`🎮 game command: ${m.command}`);
+    else if (m.type === "caption") caption(m.role, m.text);
+    else if (m.type === "turn_complete") { /* host finished a turn */ }
+  };
+}
+
+async function startMic() {
+  micStream = await navigator.mediaDevices.getUserMedia({
+    audio: { echoCancellation: true, noiseSuppression: true, channelCount: 1 },
+  });
+  micCtx = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 16000 });
+  const src = micCtx.createMediaStreamSource(micStream);
+  proc = micCtx.createScriptProcessor(2048, 1, 1);
+  const mute = micCtx.createGain(); mute.gain.value = 0;  // avoid local echo
+  proc.onaudioprocess = (e) => {
+    if (!ws || ws.readyState !== 1) return;
+    const f32 = e.inputBuffer.getChannelData(0);
+    const i16 = new Int16Array(f32.length);
+    for (let i = 0; i < f32.length; i++) { const s = Math.max(-1, Math.min(1, f32[i])); i16[i] = s < 0 ? s * 32768 : s * 32767; }
+    ws.send(i16.buffer);
+  };
+  src.connect(proc); proc.connect(mute); mute.connect(micCtx.destination);
+}
+
+function stopMic() {
+  talking = false; $("talk").classList.remove("live"); $("talk").textContent = "● Start talking";
+  try { proc && (proc.onaudioprocess = null); micCtx && micCtx.close(); } catch {}
+  try { micStream && micStream.getTracks().forEach((t) => t.stop()); } catch {}
+}
+
+$("talk").onclick = async () => {
+  if (talking) { stopMic(); if (ws) ws.close(); return; }
+  try {
+    if (!ws || ws.readyState > 1) openWS();
+    await startMic();
+    talking = true; $("talk").classList.add("live"); $("talk").textContent = "■ Stop";
+    setStatus("listening — talk to the host");
+  } catch (e) { setStatus("mic error: " + e.message); }
+};
+
+$("greet").onclick = () => { if (!ws || ws.readyState > 1) openWS(); setTimeout(() => ws.send(JSON.stringify({ type: "greet" })), 300); };
+
+$("send").onclick = () => {
+  const t = $("say").value.trim(); if (!t) return;
+  if (!ws || ws.readyState > 1) { openWS(); setTimeout(() => ws.send(JSON.stringify({ type: "text", text: t })), 400); }
+  else ws.send(JSON.stringify({ type: "text", text: t }));
+  caption("user", t); $("say").value = "";
+};
+$("say").addEventListener("keydown", (e) => { if (e.key === "Enter") $("send").click(); });
+</script>
+</body>
+</html>

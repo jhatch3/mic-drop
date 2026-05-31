@@ -24,6 +24,14 @@ GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
 GEMINI_MAX_TOOL_CALLS = int(os.getenv("GEMINI_MAX_TOOL_CALLS", "6"))
 COMMENTARY_TIMEOUT_S = float(os.getenv("COMMENTARY_TIMEOUT_S", "8.0"))
 
+# --- Gemini Live (real-time voice host) ---
+# Live models on this key output native AUDIO only (no TEXT modality), so the
+# host speaks in a Gemini voice. PCM in @16k, out @24k.
+GEMINI_LIVE_MODEL = os.getenv("GEMINI_LIVE_MODEL", "gemini-3.1-flash-live-preview")
+HOST_VOICE = os.getenv("HOST_VOICE", "Puck")          # Puck=upbeat; also Charon/Kore/Fenrir/Aoede
+LIVE_INPUT_RATE = 16000
+LIVE_OUTPUT_RATE = 24000
+
 # --- ElevenLabs (MC voice) ---
 ELEVENLABS_MODE = os.getenv("ELEVENLABS_MODE", "mock").lower()    # mock | real
 ELEVENLABS_API_KEY = os.getenv("ELEVENLABS_API_KEY", "")
