@@ -13,18 +13,27 @@ CREATE OR REPLACE TABLE songs (
   title              VARCHAR       NOT NULL,
   artist             VARCHAR       NOT NULL,
   difficulty         INTEGER       NOT NULL,                 -- 1..5
-  duration_sec       FLOAT         NOT NULL,                 -- length of the prepped segment
-  segment_start_sec  FLOAT         NOT NULL,                 -- offset into the source track
+  duration_sec       FLOAT         NOT NULL,
+  segment_start_sec  FLOAT         NOT NULL,
   segment_end_sec    FLOAT         NOT NULL,
-  hop_ms             INTEGER       NOT NULL DEFAULT 10,      -- contour frame spacing
-  -- Snowflake BINARY caps at 8 MB. 1-3 min @ 128 kbps mp3 is ~1.5-3 MB.
+  hop_ms             INTEGER       NOT NULL DEFAULT 10,
+  gamemode           VARCHAR       NOT NULL DEFAULT 'karaoke', -- 'karaoke' | 'dance'
   mp3_bytes          BINARY        NOT NULL,
-  -- contour shape: { song_id, hop_ms, frames: [{t, midi, voiced}, ...] }
-  -- VARIANT holds ~16 MB compressed (a 60 s contour is well under 200 KB).
-  contour_json       VARIANT       NOT NULL,
+  -- karaoke only: pyin contour { song_id, hop_ms, frames: [{t, midi, voiced}] }
+  contour_json       VARIANT,
+  -- karaoke only: lyrics { song_id, segment_start_sec, lines: [{t, text, end}] }
+  lyrics_json        VARIANT,
+  -- dance only: reference pose sequence { song_id, fps, frames: [{t, keypoints}] }
+  choreography_json  VARIANT,
   created_at         TIMESTAMP_NTZ NOT NULL DEFAULT CURRENT_TIMESTAMP(),
   updated_at         TIMESTAMP_NTZ NOT NULL DEFAULT CURRENT_TIMESTAMP()
 );
+
+-- Migration for existing deployments (skip if recreating from scratch):
+-- ALTER TABLE songs ADD COLUMN IF NOT EXISTS gamemode VARCHAR DEFAULT 'karaoke';
+-- ALTER TABLE songs ADD COLUMN IF NOT EXISTS lyrics_json VARIANT;
+-- ALTER TABLE songs ADD COLUMN IF NOT EXISTS choreography_json VARIANT;
+-- ALTER TABLE songs ALTER COLUMN contour_json DROP NOT NULL;
 
 -- Lightweight catalog view: everything except the binary blob and the contour.
 -- Use this for the /api/songs list endpoint and any joins from matches.

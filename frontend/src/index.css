@@ -141,6 +141,16 @@
   100% { left: 100%; }
 }
 
+/* Just Dance rating pop animation */
+@keyframes jdPop {
+  0%   { opacity: 0; transform: scale(0.4) rotate(-6deg); }
+  18%  { opacity: 1; transform: scale(1.25) rotate(3deg); }
+  32%  { transform: scale(0.95) rotate(-1deg); }
+  45%  { transform: scale(1.05) rotate(0deg); }
+  60%  { opacity: 1; transform: scale(1) rotate(0deg); }
+  100% { opacity: 0; transform: scale(1.1) rotate(2deg); }
+}
+
 @media (prefers-reduced-motion: reduce) {
   * {
     animation-duration: 0.001ms !important;

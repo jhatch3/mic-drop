@@ -66,15 +66,14 @@ function drawSkeleton(
   alpha: number,
   dotRadius = 5,
   lineWidth = 3,
+  mirror = false,
 ) {
   ctx.save();
   ctx.globalAlpha = alpha;
   ctx.lineCap = "round";
   ctx.lineJoin = "round";
 
-  // Mirror X to match the selfie-mirrored video (transform: scaleX(-1)), so the points line
-  // up with the player instead of appearing on the opposite side.
-  const X = (i: number) => (1 - landmarks[i].x) * width;
+  const X = (i: number) => (mirror ? 1 - landmarks[i].x : landmarks[i].x) * width;
   const Y = (i: number) => landmarks[i].y * height;
 
   // Connections: cyan bones (broadcast).
@@ -119,48 +118,29 @@ export default function PoseOverlay({ width, height, liveLandmarks, referenceFra
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
 
-    ctx.clearRect(0, 0, width, height);
+    // Sync canvas bitmap resolution to its actual CSS display size so drawings
+    // map 1:1 to the video pixels regardless of aspect ratio.
+    const cw = canvas.offsetWidth || width;
+    const ch = canvas.offsetHeight || height;
+    if (canvas.width !== cw) canvas.width = cw;
+    if (canvas.height !== ch) canvas.height = ch;
+
+    ctx.clearRect(0, 0, cw, ch);
 
     if (!active) return;
 
-    // Reference ghost skeleton (TARGET — magenta)
+    // Reference ghost skeleton (TARGET — magenta, not mirrored — raw coords match unmirrored video)
     if (referenceFrame) {
       const refLandmarks = refFrameToLandmarks(referenceFrame);
-      drawSkeleton(ctx, refLandmarks, width, height, PAL.magenta, PAL.magenta, 0.45, 6, 5);
+      drawSkeleton(ctx, refLandmarks, cw, ch, PAL.magenta, PAL.magenta, 0.45, 6, 5, false);
     }
 
-    // Live skeleton (PLAYER — cyan bones, slime joints)
+    // Live skeleton (PLAYER — cyan bones, slime joints, mirrored to match webcam)
     if (liveLandmarks) {
       const live = liveLandmarks.map((lm) => ({ x: lm.x, y: lm.y }));
-      drawSkeleton(ctx, live, width, height, PAL.cyan, PAL.slime, 0.95, 6, 5);
+      drawSkeleton(ctx, live, cw, ch, PAL.cyan, PAL.slime, 0.95, 6, 5, true);
     }
 
-    // Score badge
-    const badgeColor = score >= 70 ? PAL.slime : score >= 40 ? PAL.yellow : PAL.red;
-    const badgeX = width - 90;
-    const badgeY = 16;
-    ctx.save();
-    // Ink panel with chunky offset shadow (broadcast bevel feel).
-    ctx.fillStyle = PAL.ink;
-    ctx.fillRect(badgeX - 4, badgeY, 96, 48);
-    ctx.fillStyle = "rgba(11,11,11,0.88)";
-    ctx.fillRect(badgeX - 8, badgeY - 4, 96, 48);
-    ctx.strokeStyle = PAL.ink;
-    ctx.lineWidth = 3;
-    ctx.strokeRect(badgeX - 8, badgeY - 4, 96, 48);
-    // Score number — Anton display, ink shadow for legibility.
-    ctx.font = `36px ${FONT.display}`;
-    ctx.textAlign = "right";
-    ctx.fillStyle = PAL.ink;
-    ctx.fillText(`${score}`, width - 14, badgeY + 36);
-    ctx.fillStyle = badgeColor;
-    ctx.fillText(`${score}`, width - 16, badgeY + 34);
-    // Label — VT323 mono "TV" status type.
-    ctx.font = `15px ${FONT.mono}`;
-    ctx.fillStyle = PAL.cyan;
-    ctx.textAlign = "left";
-    ctx.fillText("SCORE", badgeX, badgeY + 13);
-    ctx.restore();
   }, [width, height, liveLandmarks, referenceFrame, score, active]);
 
   return (
@@ -172,6 +152,8 @@ export default function PoseOverlay({ width, height, liveLandmarks, referenceFra
         position: "absolute",
         top: 0,
         left: 0,
+        width: "100%",
+        height: "100%",
         pointerEvents: "none",
       }}
     />
