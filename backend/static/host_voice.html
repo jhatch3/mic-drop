@@ -41,7 +41,8 @@ so he doesn't hear himself. Connects to <code>/ws/host</code> (Gemini Live + Ele
   <span class="status" id="status">idle</span>
 </div>
 <p class="muted" id="micstate">🎙 mic: off</p>
-<p class="muted">Hit <b>Talk to host</b> to chat by voice — your words appear live below as you speak.</p>
+<p class="muted">Click <b>Talk to host</b>, speak, then click <b>Stop &amp; send</b> — your words appear below
+and the host replies. Watch the level meter to confirm your mic is picking you up.</p>
 
 <div class="row">
   <input type="text" id="say" placeholder="…or type to the host (no mic needed)" />
@@ -164,25 +165,33 @@ function downsampleTo16k(f32, inRate) {
   }
   return out;
 }
-let sentChunks = 0, micOn = false;
-// Client-side speech detection (manual activity for Gemini Live):
-let speaking = false, silenceMs = 0;
-const VAD_THRESH = 0.012;        // RMS above this = speech
-const SILENCE_HANG_MS = 800;     // this much silence ends the utterance → host replies
+let sentChunks = 0, micOn = false, talking = false;
 const setMicState = (on) => {
   micOn = on;
-  $("micstate").textContent = on ? "🎙 mic: ON — your voice is live" : "🎙 mic: off";
-  $("mic").textContent = on ? "🔇 Stop talking" : "🎤 Talk to host";
+  $("micstate").textContent = on ? "🎙 mic: ON" : "🎙 mic: off";
+  if (!on) $("mic").textContent = "🎤 Talk to host";
 };
+// Click-to-talk: click to start speaking, click again to send → host replies.
 async function talkToHost() {
-  if (micOn) { stopMic(); setStatus("mic off"); return; }
-  try {
-    await startMic();
-    setStatus("🎙 listening — talk to the host; your words appear below as you speak");
-  } catch (e) {
-    setStatus(`mic error (${e.name})`);
-    logLine(`mic error: ${e.name} — ${e.message}`);
-    if (e.name === "NotAllowedError" || e.name === "SecurityError") $("help").style.display = "block";
+  if (!micOn) {
+    try { await startMic(); }
+    catch (e) {
+      setStatus(`mic error (${e.name})`);
+      logLine(`mic error: ${e.name} — ${e.message}`);
+      if (e.name === "NotAllowedError" || e.name === "SecurityError") $("help").style.display = "block";
+      return;
+    }
+  }
+  if (!talking) {
+    talking = true;
+    ws.send(JSON.stringify({ type: "activity_start" }));
+    $("mic").textContent = "⏹ Stop & send";
+    setStatus("🎙 talking — speak, then click Stop & send");
+  } else {
+    talking = false;
+    ws.send(JSON.stringify({ type: "activity_end" }));
+    $("mic").textContent = "🎤 Talk to host";
+    setStatus("sent — host is responding");
   }
 }
 async function startMic() {
@@ -198,37 +207,27 @@ async function startMic() {
   const src = micCtx.createMediaStreamSource(micStream);
   proc = micCtx.createScriptProcessor(4096, 1, 1);
   const mute = micCtx.createGain(); mute.gain.value = 0;  // avoid local echo
-  sentChunks = 0; speaking = false; silenceMs = 0;
+  sentChunks = 0; talking = false;
   proc.onaudioprocess = (e) => {
     if (!ws || ws.readyState !== 1) return;
-    if (match.singing) return;   // scored take: record only, don't feed the bot
+    if (match.singing) return;        // scored take: record only, don't feed the bot
     const ch = e.inputBuffer.getChannelData(0);
-    let sum = 0; for (let i = 0; i < ch.length; i++) sum += ch[i] * ch[i];
-    const rms = Math.sqrt(sum / ch.length);
-    const frameMs = (ch.length / inRate) * 1000;
-    if (rms > VAD_THRESH) {
-      if (!speaking) { speaking = true; ws.send(JSON.stringify({ type: "activity_start" })); setStatus("🎙 hearing you…"); }
-      silenceMs = 0;
-    } else if (speaking) {
-      silenceMs += frameMs;
-    }
-    if (speaking) {                                   // stream only during an utterance
-      const ds = downsampleTo16k(ch, inRate);
-      const i16 = new Int16Array(ds.length);
-      for (let i = 0; i < ds.length; i++) { const s = Math.max(-1, Math.min(1, ds[i])); i16[i] = s < 0 ? s * 32768 : s * 32767; }
-      ws.send(i16.buffer);
-      if (silenceMs > SILENCE_HANG_MS) {              // end of utterance → host replies
-        speaking = false; silenceMs = 0;
-        ws.send(JSON.stringify({ type: "activity_end" }));
-        setStatus("…host is responding");
-      }
+    let peak = 0; for (let i = 0; i < ch.length; i++) { const a = Math.abs(ch[i]); if (a > peak) peak = a; }
+    if (!talking) return;             // click-to-talk: only stream while "talking"
+    const ds = downsampleTo16k(ch, inRate);
+    const i16 = new Int16Array(ds.length);
+    for (let i = 0; i < ds.length; i++) { const s = Math.max(-1, Math.min(1, ds[i])); i16[i] = s < 0 ? s * 32768 : s * 32767; }
+    ws.send(i16.buffer);
+    if ((++sentChunks % 6) === 0) {   // live level so you can SEE it's capturing
+      const bars = "█".repeat(Math.min(20, Math.round(peak * 60)));
+      setStatus(`🎙 talking… level ${bars || "(silent — speak up / check input device)"}`);
     }
   };
   src.connect(proc); proc.connect(mute); mute.connect(micCtx.destination);
 }
 
 function stopMic() {
-  if (speaking && ws && ws.readyState === 1) { ws.send(JSON.stringify({ type: "activity_end" })); speaking = false; }
+  if (talking && ws && ws.readyState === 1) { ws.send(JSON.stringify({ type: "activity_end" })); talking = false; }
   try { proc && (proc.onaudioprocess = null); micCtx && micCtx.close(); } catch {}
   try { micStream && micStream.getTracks().forEach((t) => t.stop()); } catch {}
   setMicState(false);
