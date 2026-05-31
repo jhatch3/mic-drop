@@ -1,13 +1,25 @@
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect, useRef } from "react";
 import { useWallet } from "@solana/wallet-adapter-react";
 import { WalletMultiButton } from "@solana/wallet-adapter-react-ui";
 import { LAMPORTS_PER_SOL } from "@solana/web3.js";
 import QRCode from "react-qr-code";
 import { useGameRoom } from "../services/useGameRoom";
 import { useEscrow } from "../services/useEscrow";
+import { useVoiceHost } from "./useVoiceHost";
 import Karaoke, { type KaraokeResult } from "./Karaoke";
 import { NeonHeading, NeonButton, CRTCard } from "@/retro";
 import { Input } from "@/components/ui/input";
+
+// Closed-caption bar pinned to the bottom while the AI host (or you) is talking.
+function Captions({ host, you }: { host: string; you: string }) {
+  if (!host && !you) return null;
+  return (
+    <div className="pointer-events-none fixed inset-x-0 bottom-0 z-50 flex flex-col items-center gap-1 p-4">
+      {host && <div className="max-w-2xl rounded-lg bg-black/80 px-4 py-2 text-center font-body text-lg text-pink"><span className="text-magenta">🎙</span> {host}</div>}
+      {you && <div className="max-w-2xl rounded-lg bg-black/70 px-4 py-1.5 text-center font-body text-base text-lime">🧑 {you}</div>}
+    </div>
+  );
+}
 
 const labelCls = "font-display text-[10px] uppercase tracking-widest text-muted-foreground";
 
@@ -42,16 +54,32 @@ export default function KaraokeHost() {
     }
   }, [room, createAndStake, beginGame, addLog]);
 
+  // ── AI game-show host: greets, asks "ready?", you answer by voice, he starts the game ──
+  const startRef = useRef(handleStartGame);
+  startRef.current = handleStartGame;
+  const voice = useVoiceHost({
+    onCommand: (cmd) => { if (cmd === "start_game") void startRef.current(); },
+  });
+  // Bring the host in the moment the room exists (he introduces himself + auto-listens).
+  useEffect(() => {
+    if (phase === "waiting") voice.connect(true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [phase]);
+
   const joinUrl = room ? `${window.location.origin}/play?code=${room.code}` : null;
 
-  // Gaming turn: hand the whole screen to the live karaoke station.
+  // Gaming turn: hand the whole screen to the live karaoke station (music auto-starts).
   if (phase === "gaming" && room && currentTurn) {
     return (
-      <Karaoke
-        key={currentTurn.wallet}
-        playerLabel={`${currentTurn.player} — sing into this laptop!`}
-        onFinish={handleTurnFinish}
-      />
+      <>
+        <Karaoke
+          key={currentTurn.wallet}
+          playerLabel={`${currentTurn.player} — sing into this laptop!`}
+          autoPlay
+          onFinish={handleTurnFinish}
+        />
+        <Captions host={voice.hostCaption} you={voice.youCaption} />
+      </>
     );
   }
 
@@ -96,6 +124,13 @@ export default function KaraokeHost() {
                 {busy ? "…" : "🔒 Start Game & Lock Wagers"}
               </NeonButton>
             )}
+            <div className={`${labelCls} mt-3 normal-case tracking-normal`}>
+              {voice.listening
+                ? "🎙 Host is listening — say “yes, we’re ready!”"
+                : voice.connected
+                  ? "🎙 The AI host is introducing the game…"
+                  : "🎙 Bringing in the AI host…"}
+            </div>
           </CRTCard>
         )}
 
@@ -139,6 +174,7 @@ export default function KaraokeHost() {
           </div>
         </CRTCard>
       </div>
+      <Captions host={voice.hostCaption} you={voice.youCaption} />
     </div>
   );
 }

@@ -41,6 +41,9 @@ interface KaraokeProps {
    *  pressing "Finish turn") fires this with the final score instead of just
    *  stopping playback. Used by the local hot-seat 2-player game. */
   onFinish?: (result: KaraokeResult) => void;
+  /** Auto-start mic + music on mount (no "Sing" click) — used when the AI host
+   *  kicks off the turn. */
+  autoPlay?: boolean;
 }
 
 const SR = 44100, FMIN = 65, FMAX = 1000, RMS_GATE = 0.006, CONF_MIN = 0.5;
@@ -196,7 +199,7 @@ function drawGraph(
 }
 
 // ─── Main component ───────────────────────────────────────────────────────────
-export default function Karaoke({ song = DEFAULT_SONG, playerLabel, onFinish }: KaraokeProps = {}) {
+export default function Karaoke({ song = DEFAULT_SONG, playerLabel, onFinish, autoPlay }: KaraokeProps = {}) {
   const [lines, setLines]           = useState<LyricLine[]>([]);
   const [contour, setContour]       = useState<ContourFrame[]>([]);
   const [activeIdx, setActiveIdx]   = useState(-1);
@@ -288,6 +291,17 @@ export default function Karaoke({ song = DEFAULT_SONG, playerLabel, onFinish }: 
     if (playing) { audio.pause(); setPlaying(false); }
     else { if (!micOn) await startMic(); await audio.play(); setPlaying(true); }
   }, [playing, micOn, startMic]);
+
+  // Auto-start the turn (mic + music) when the AI host launches it.
+  const startedRef = useRef(false);
+  useEffect(() => {
+    if (!autoPlay || startedRef.current) return;
+    startedRef.current = true;
+    (async () => {
+      try { if (!micOn) await startMic(); await audioRef.current?.play(); setPlaying(true); }
+      catch { /* autoplay blocked → user taps Sing */ }
+    })();
+  }, [autoPlay, micOn, startMic]);
 
   const restart = useCallback(async () => {
     const audio = audioRef.current; if (!audio) return;
