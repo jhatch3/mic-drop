@@ -6,6 +6,7 @@ import { Keypair, PublicKey, LAMPORTS_PER_SOL, SystemProgram, Transaction } from
 import QRCode from "react-qr-code";
 import { motion } from "motion/react";
 import { getSocket } from "./socket";
+import { useVoiceHost } from "./useVoiceHost";
 import type { RoomState } from "./types";
 import IDL from "../idl/pitch_battle.json";
 import { NeonHeading, NeonButton, CRTCard, ScoreBar } from "@/retro";
@@ -469,6 +470,34 @@ export default function Host() {
     }
   }, [room, selectedSongId, socket]);
 
+  // ── Live AI host: its tool calls drive THIS game; we narrate events back to it ──
+  const voice = useVoiceHost({
+    onCommand: (cmd) => {
+      if (cmd === "start_game") { if (phase === "waiting" && !busy) void startGame(); }
+      else if (cmd === "start_p2_turn") { void endTurn(); }   // end P1 → server advances to P2
+      else if (cmd === "end_game") { void endTurn(); }        // end P2 → finishMatch
+      // start_p1_turn: server auto-starts P1 recording on game:start — narration only
+    },
+    onCaption: (role, text) => addLog(`${role === "host" ? "🎙" : "🧑"} ${text}`),
+  });
+
+  // Hype each turn through the live host.
+  useEffect(() => {
+    if (voice.connected && currentTurn)
+      voice.tell(`${currentTurn.player} is up to sing now — hype them in ONE short line.`);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentTurn, voice.connected]);
+
+  // Announce + roast the real result through the live host.
+  useEffect(() => {
+    if (voice.connected && finish) {
+      const s1 = finish.scores?.[0]?.score ?? 0, s2 = finish.scores?.[1]?.score ?? 0;
+      voice.tell(`The scores are in: Player 1 ${s1}, Player 2 ${s2}. The winner is ${finish.winner}. `
+        + `Announce the winner with big energy, play the applause sound, then roast the loser in one line.`);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [finish, voice.connected]);
+
   const joinUrl = room ? `${window.location.origin}/play?code=${room.code}` : null;
   const winnerWallet =
     finish?.winner === "p1" ? room?.players[0].wallet
@@ -579,6 +608,11 @@ export default function Host() {
                     : "🎤 Start Solo (you sing both turns)"}
               </NeonButton>
             )}
+            {room.players.length >= 1 && (
+              <NeonButton onClick={voice.connect} disabled={voice.connected} variant="cyan" className="mt-2 w-full">
+                {voice.connected ? "🎙 AI Host is running the show" : "🎙 Let the AI Host start it"}
+              </NeonButton>
+            )}
           </CRTCard>
         )}
 
@@ -662,7 +696,7 @@ export default function Host() {
             {finish.mc_audio_url && (
               <audio
                 controls
-                autoPlay
+                autoPlay={!voice.connected}
                 src={`${API_BASE}${finish.mc_audio_url}`}
                 className="w-full"
               />
