@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import { useWallet, useConnection } from "@solana/wallet-adapter-react";
 import { WalletMultiButton } from "@solana/wallet-adapter-react-ui";
 import { AnchorProvider, Program, BN } from "@coral-xyz/anchor";
-import { Keypair, PublicKey, LAMPORTS_PER_SOL, SystemProgram } from "@solana/web3.js";
+import { Keypair, PublicKey, LAMPORTS_PER_SOL, SystemProgram, Transaction } from "@solana/web3.js";
 import QRCode from "react-qr-code";
 import { getSocket } from "./socket";
 import type { RoomState } from "./types";
@@ -78,6 +78,31 @@ function vaultPda(matchId: string, programId: PublicKey) {
   return PublicKey.findProgramAddressSync(
     [Buffer.from("vault"), Buffer.from(matchId)], programId,
   )[0];
+}
+
+// ─── Error detail extractor ──────────────────────────────────────────────────
+// Anchor/web3 errors hide the useful bits behind .logs / .getLogs(). Surface
+// everything so the on-screen log tells us EXACTLY which call failed and why.
+function errDetail(e: any): string {
+  const parts: string[] = [];
+  if (e?.name) parts.push(`name=${e.name}`);
+  if (e?.message) parts.push(`msg=${e.message}`);
+  if (e?.code !== undefined) parts.push(`code=${e.code}`);
+  // SendTransactionError carries simulation logs
+  try {
+    const logs = typeof e?.getLogs === "function" ? e.getLogs() : e?.logs;
+    if (logs?.length) parts.push(`logs=${JSON.stringify(logs).slice(0, 800)}`);
+  } catch { /* ignore */ }
+  // Detect the devnet faucet rate-limit specifically
+  if (/airdrop|faucet/i.test(e?.message ?? "")) {
+    parts.push("⚠️ FAUCET-RATE-LIMIT (not an RPC issue — faucet.solana.com is shared/per-IP)");
+  }
+  return parts.join(" | ") || String(e);
+}
+
+// Is this balance enough to cover the stake + a tx fee?
+function lamportsNeededFor(stakeLamports: number): number {
+  return stakeLamports + 2_000_000; // stake + ~0.002 SOL fee/rent headroom
 }
 
 // ─── Component ───────────────────────────────────────────────────────────────
@@ -189,14 +214,64 @@ export default function Host() {
     setBusy(false);
   }, [wallet.publicKey, stakeSOL, socket, selectedSongId]);
 
+  // Fund the demo P2 key so it can cover its stake. Faucet-FIRST (free), then
+  // fall back to a direct transfer from the connected P1 wallet (faucet-INDEPENDENT
+  // — P1 is a real funded Phantom wallet, so this always works even when the
+  // devnet faucet is dry/rate-limited). Throws only if BOTH paths fail.
+  const fundDemoP2 = useCallback(async (program: Program) => {
+    const need = lamportsNeededFor(room!.stake);
+    let bal = await connection.getBalance(demoP2.publicKey);
+    addLog(`[fund] P2 balance=${(bal / LAMPORTS_PER_SOL).toFixed(4)} SOL, need=${(need / LAMPORTS_PER_SOL).toFixed(4)} SOL`);
+    if (bal >= need) { addLog("[fund] P2 already funded ✓ (no faucet/transfer needed)"); return; }
+
+    // 1) Try the faucet (best-effort, short).
+    addLog("[fund] P2 low — trying devnet airdrop (faucet)…");
+    try {
+      const sig = await connection.requestAirdrop(demoP2.publicKey, LAMPORTS_PER_SOL);
+      await connection.confirmTransaction(sig, "confirmed");
+      bal = await connection.getBalance(demoP2.publicKey);
+      addLog(`[fund] airdrop landed ✓ P2 balance=${(bal / LAMPORTS_PER_SOL).toFixed(4)} SOL`);
+    } catch (e: any) {
+      addLog(`[fund] airdrop failed → ${errDetail(e)}`);
+    }
+    if (bal >= need) return;
+
+    // 2) Fallback: transfer from the connected P1 wallet. This needs P1 to sign
+    //    one extra Phantom popup, but it does NOT touch the faucet.
+    const topUp = need - bal;
+    const p1Bal = await connection.getBalance(wallet.publicKey!);
+    addLog(`[fund] faucet unavailable — transferring ${(topUp / LAMPORTS_PER_SOL).toFixed(4)} SOL from P1 (P1 has ${(p1Bal / LAMPORTS_PER_SOL).toFixed(4)} SOL). Approve in Phantom…`);
+    if (p1Bal < topUp + 5_000) {
+      throw new Error(`P1 wallet too low to fund P2 (has ${(p1Bal / LAMPORTS_PER_SOL).toFixed(4)} SOL, needs ${(topUp / LAMPORTS_PER_SOL).toFixed(4)} + fee). Fund your Phantom wallet on devnet.`);
+    }
+    const tx = new Transaction().add(
+      SystemProgram.transfer({
+        fromPubkey: wallet.publicKey!,
+        toPubkey: demoP2.publicKey,
+        lamports: topUp,
+      }),
+    );
+    // AnchorProvider.sendAndConfirm signs with the connected wallet (P1).
+    const sig = await (program.provider as AnchorProvider).sendAndConfirm(tx);
+    bal = await connection.getBalance(demoP2.publicKey);
+    addLog(`[fund] P1→P2 transfer confirmed ✓ (${sig.slice(0, 12)}…) P2 balance=${(bal / LAMPORTS_PER_SOL).toFixed(4)} SOL`);
+    if (bal < need) throw new Error(`P2 still underfunded after transfer (${(bal / LAMPORTS_PER_SOL).toFixed(4)} SOL).`);
+  }, [room, connection, wallet.publicKey]);
+
   // ── Start game: create on-chain match + stake P1, then kick off turns ───
   const startGame = useCallback(async () => {
     if (!room || !wallet.publicKey) return;
     if (!oracle) { addLog("Oracle pubkey not loaded yet — wait for backend"); return; }
     if (!selectedSongId) { addLog("Pick a song first"); return; }
     setBusy(true);
-    addLog("Creating escrow on-chain…");
+
+    // Step-by-step instrumentation: every on-chain call is wrapped so the log
+    // pinpoints EXACTLY which step throws and with what detail.
+    let step = "init";
     try {
+      addLog(`[start] RPC endpoint = ${connection.rpcEndpoint}`);
+      addLog(`[start] escrow_mode = ${oracle.escrow_mode}, program = ${oracle.program_id.slice(0, 8)}…`);
+
       const programId = new PublicKey(oracle.program_id);
       const treasury  = new PublicKey(oracle.treasury_pubkey);
       const oraclePk  = new PublicKey(oracle.oracle_pubkey);
@@ -205,65 +280,95 @@ export default function Host() {
       matchIdRef.current = matchId;
       const mPda = matchPda(matchId, programId);
       const vPda = vaultPda(matchId, programId);
+      addLog(`[start] matchId=${matchId} matchPda=${mPda.toBase58().slice(0, 8)}… vaultPda=${vPda.toBase58().slice(0, 8)}…`);
 
-      // player_two = the laptop-held demo key (not the phone wallet): the program
-      // only lets player_one/player_two sign `stake`, so the laptop can fund both
-      // stakes itself. The phone wallet stays identity/display only.
-      await program.methods
-        .createMatch(matchId, new BN(room.stake), demoP2.publicKey, oraclePk, treasury, FEE_BPS)
-        .accounts({
-          playerOne: wallet.publicKey,
-          matchAccount: mPda,
-          vault: vPda,
-          systemProgram: SystemProgram.programId,
-        })
-        .rpc();
-      addLog("Escrow created. Staking P1…");
-
-      await program.methods
-        .stake(matchId)
-        .accounts({
-          signer: wallet.publicKey,
-          matchAccount: mPda,
-          vault: vPda,
-          systemProgram: SystemProgram.programId,
-        })
-        .rpc();
-      addLog("P1 staked. Funding + staking demo P2…");
-
-      // Make sure the demo P2 key can cover the stake (no-op if already funded).
-      const needLamports = room.stake + 5_000_000; // stake + fee headroom
-      const bal = await connection.getBalance(demoP2.publicKey);
-      if (bal < needLamports) {
-        addLog(`Demo P2 low (${(bal / LAMPORTS_PER_SOL).toFixed(4)} SOL) — requesting airdrop…`);
-        try {
-          const sig = await connection.requestAirdrop(demoP2.publicKey, LAMPORTS_PER_SOL);
-          await connection.confirmTransaction(sig, "confirmed");
-        } catch (e: any) {
-          addLog(`P2 airdrop failed: ${e.message}. Fund ${demoP2.publicKey.toBase58()} at faucet.solana.com, then retry.`);
-        }
+      // Sanity: P1 (connected wallet) must have SOL to pay rent + its own stake.
+      const p1Bal = await connection.getBalance(wallet.publicKey);
+      addLog(`[start] P1 (${wallet.publicKey.toBase58().slice(0, 8)}…) balance=${(p1Bal / LAMPORTS_PER_SOL).toFixed(4)} SOL`);
+      if (p1Bal < lamportsNeededFor(room.stake)) {
+        addLog(`⚠️ P1 may be too low to create+stake (need ≳${(lamportsNeededFor(room.stake) / LAMPORTS_PER_SOL).toFixed(4)} SOL). Fund your Phantom wallet on devnet.`);
       }
 
-      await program.methods
-        .stake(matchId)
-        .accounts({
-          signer: demoP2.publicKey,
-          matchAccount: mPda,
-          vault: vPda,
-          systemProgram: SystemProgram.programId,
-        })
-        .signers([demoP2])
-        .rpc();
+      // Does the match already exist on-chain from a prior attempt?
+      step = "fetch-existing-match";
+      let matchExists = false;
+      try {
+        await (program.account as any).match.fetch(mPda);
+        matchExists = true;
+        addLog("[start] match PDA already exists on-chain — skipping createMatch (resuming).");
+      } catch {
+        addLog("[start] match PDA not found — will create it.");
+      }
+
+      // 1) Create the escrow match account (P1/Phantom pays rent + signs).
+      if (!matchExists) {
+        step = "createMatch";
+        addLog("[createMatch] sending… (approve in Phantom)");
+        const t0 = performance.now();
+        const sig = await program.methods
+          .createMatch(matchId, new BN(room.stake), demoP2.publicKey, oraclePk, treasury, FEE_BPS)
+          .accounts({
+            playerOne: wallet.publicKey,
+            matchAccount: mPda,
+            vault: vPda,
+            systemProgram: SystemProgram.programId,
+          })
+          .rpc();
+        addLog(`[createMatch] ✓ ${sig.slice(0, 12)}… (${Math.round(performance.now() - t0)}ms)`);
+      }
+
+      // 2) Stake P1 (Phantom signs).
+      step = "stakeP1";
+      addLog("[stakeP1] sending… (approve in Phantom)");
+      {
+        const t0 = performance.now();
+        const sig = await program.methods
+          .stake(matchId)
+          .accounts({
+            signer: wallet.publicKey,
+            matchAccount: mPda,
+            vault: vPda,
+            systemProgram: SystemProgram.programId,
+          })
+          .rpc();
+        addLog(`[stakeP1] ✓ ${sig.slice(0, 12)}… (${Math.round(performance.now() - t0)}ms)`);
+      }
+
+      // 3) Fund the demo P2 key (faucet → P1-transfer fallback).
+      step = "fundDemoP2";
+      await fundDemoP2(program);
+
+      // 4) Stake P2 (laptop-held demo key signs locally — no Phantom popup).
+      step = "stakeP2";
+      addLog("[stakeP2] sending… (demo key signs locally)");
+      {
+        const t0 = performance.now();
+        const sig = await program.methods
+          .stake(matchId)
+          .accounts({
+            signer: demoP2.publicKey,
+            matchAccount: mPda,
+            vault: vPda,
+            systemProgram: SystemProgram.programId,
+          })
+          .signers([demoP2])
+          .rpc();
+        addLog(`[stakeP2] ✓ ${sig.slice(0, 12)}… (${Math.round(performance.now() - t0)}ms)`);
+      }
+
       setP2Bal((await connection.getBalance(demoP2.publicKey)) / LAMPORTS_PER_SOL);
-      addLog("P2 staked. Match fully staked — backend oracle can settle. Starting turns…");
+      addLog("✅ Match fully staked — backend oracle can settle. Starting turns…");
 
       socket.emit("match:set_id", { code: room.code, matchId });
       socket.emit("game:start", { code: room.code });
     } catch (e: any) {
-      addLog("Error: " + e.message);
+      // Mirror to devtools console with the full object for stack/inspection.
+      // eslint-disable-next-line no-console
+      console.error(`[startGame] failed at step "${step}":`, e);
+      addLog(`❌ FAILED at step "${step}" → ${errDetail(e)}`);
     }
     setBusy(false);
-  }, [room, wallet.publicKey, oracle, selectedSongId, getProgram, socket, connection]);
+  }, [room, wallet.publicKey, oracle, selectedSongId, getProgram, socket, connection, fundDemoP2]);
 
   // ── Mic capture ─────────────────────────────────────────────────────────
   async function startRecording() {
