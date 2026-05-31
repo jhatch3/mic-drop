@@ -28,7 +28,8 @@ from .host_tools import dispatch
 log = logging.getLogger(__name__)
 router = APIRouter()
 
-GREETING = "The show is starting — play the game_show_open sound, then welcome the crowd to MIC DROP!"
+GREETING = ("The show is starting — play the game_show_open sound, then welcome the crowd to "
+            "MIC DROP. Finish your welcome by asking the players: \"Are we ready to start?\"")
 
 
 @router.websocket("/ws/host")
