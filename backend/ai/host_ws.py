@@ -60,8 +60,14 @@ async def host_ws(ws: WebSocket) -> None:
                         rx["chunks"] += 1
                         rx["bytes"] += len(b)
                         if rx["chunks"] % 50 == 0:
-                            log.warning("host_ws RX mic: %d chunks, %d KB", rx["chunks"], rx["bytes"] // 1024)
-                            await ws.send_json({"type": "debug", "rx_chunks": rx["chunks"], "rx_kb": rx["bytes"] // 1024})
+                            import numpy as np
+                            arr = np.frombuffer(b, dtype="<i2")
+                            peak = int(np.abs(arr).max()) if arr.size else 0
+                            level = "SILENT (mic dead/wrong device)" if peak < 200 else f"OK signal (peak {peak}/32767)"
+                            log.warning("host_ws RX mic: %d chunks, %d KB, audio level: %s",
+                                        rx["chunks"], rx["bytes"] // 1024, level)
+                            await ws.send_json({"type": "debug", "rx_chunks": rx["chunks"],
+                                                "rx_kb": rx["bytes"] // 1024, "peak": peak})
                         await session.send_realtime_input(
                             audio=types.Blob(data=b, mime_type=f"audio/pcm;rate={config.LIVE_INPUT_RATE}")
                         )

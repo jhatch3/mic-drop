@@ -62,11 +62,19 @@ so he doesn't hear himself. Connects to <code>/ws/host</code> (Gemini Live + Ele
 const $ = (id) => document.getElementById(id);
 const setStatus = (t) => ($("status").textContent = t);
 const logLine = (t) => { const d = document.createElement("div"); d.textContent = t; $("log").prepend(d); };
-const caption = (role, t) => {
-  const d = document.createElement("div"); d.className = "cap";
-  d.innerHTML = `<span class="${role}">${role === "host" ? "🎙 Host" : "🧑 You"}:</span> ${t}`;
-  $("caps").prepend(d);
-};
+// Streaming captions: transcription arrives in chunks — accumulate each speaker's
+// current turn into one growing line, then start a fresh line on turn_complete.
+let liveCap = { host: null, user: null };
+function streamCaption(role, chunk) {
+  if (!liveCap[role]) {
+    const d = document.createElement("div"); d.className = "cap";
+    d.innerHTML = `<span class="${role}">${role === "host" ? "🎙 Host" : "🧑 You"}:</span> <span class="txt"></span>`;
+    $("caps").prepend(d);
+    liveCap[role] = d.querySelector(".txt");
+  }
+  liveCap[role].textContent += chunk;
+}
+function finalizeCaptions() { liveCap = { host: null, user: null }; }
 
 let ws, micCtx, playCtx, nextTime = 0, talking = false, micStream, proc;
 
@@ -126,9 +134,12 @@ function openWS() {
     if (m.type === "status") setStatus(m.msg);
     else if (m.type === "sfx") { scheduleSfx(m.name, m.duration); }
     else if (m.type === "game") logLine(`🎮 game command: ${m.command}`);
-    else if (m.type === "caption") caption(m.role, m.text);
-    else if (m.type === "debug") setStatus(`backend received ${m.rx_chunks} mic chunks (${m.rx_kb} KB) — keep talking`);
-    else if (m.type === "turn_complete") { /* host finished a turn */ }
+    else if (m.type === "caption") streamCaption(m.role, m.text);
+    else if (m.type === "debug") {
+      const lvl = m.peak < 200 ? `⚠️ SILENT (peak ${m.peak}) — wrong/dead mic` : `🎙 signal OK (peak ${m.peak})`;
+      setStatus(`backend got ${m.rx_chunks} chunks · ${lvl}`);
+    }
+    else if (m.type === "turn_complete") finalizeCaptions();
   };
 }
 
@@ -221,7 +232,7 @@ $("send").onclick = () => {
   const t = $("say").value.trim(); if (!t) return;
   if (!ws || ws.readyState > 1) { openWS(); setTimeout(() => ws.send(JSON.stringify({ type: "text", text: t })), 400); }
   else ws.send(JSON.stringify({ type: "text", text: t }));
-  caption("user", t); $("say").value = "";
+  streamCaption("user", t); finalizeCaptions(); $("say").value = "";
 };
 $("say").addEventListener("keydown", (e) => { if (e.key === "Enter") $("send").click(); });
 </script>

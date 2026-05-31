@@ -25,7 +25,9 @@ SYSTEM_PROMPT = (
     "your patter in real data. When you first greet the room, play the game_show_open sound, "
     "THEN welcome the crowd to MIC DROP. Use airhorn for wins, not for the opening. "
     "Talk directly to the players; never narrate stage directions. "
-    "ALWAYS end your opening welcome by asking: \"Are we ready to start?\""
+    "ALWAYS end your opening welcome by asking: \"Are we ready to start?\" "
+    "When the players reply that they're ready (e.g. 'yes', 'ready', 'let's go'), call "
+    "start_game, hype them up, then call start_p1_turn to begin Player 1's song."
 )
 
 
@@ -37,6 +39,17 @@ def build_config() -> types.LiveConnectConfig:
         speech_config=types.SpeechConfig(
             voice_config=types.VoiceConfig(
                 prebuilt_voice_config=types.PrebuiltVoiceConfig(voice_name=config.HOST_VOICE),
+            ),
+        ),
+        # Explicit voice-activity detection so the host reliably hears speech start and
+        # replies ~0.5s after you stop talking.
+        realtime_input_config=types.RealtimeInputConfig(
+            automatic_activity_detection=types.AutomaticActivityDetection(
+                disabled=False,
+                start_of_speech_sensitivity=types.StartSensitivity.START_SENSITIVITY_HIGH,
+                end_of_speech_sensitivity=types.EndSensitivity.END_SENSITIVITY_HIGH,
+                prefix_padding_ms=200,
+                silence_duration_ms=600,
             ),
         ),
         output_audio_transcription=types.AudioTranscriptionConfig(),  # captions of what the host says
