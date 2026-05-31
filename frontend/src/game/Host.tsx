@@ -4,9 +4,20 @@ import { WalletMultiButton } from "@solana/wallet-adapter-react-ui";
 import { AnchorProvider, Program, BN } from "@coral-xyz/anchor";
 import { Keypair, PublicKey, LAMPORTS_PER_SOL, SystemProgram, Transaction } from "@solana/web3.js";
 import QRCode from "react-qr-code";
+import { motion } from "motion/react";
 import { getSocket } from "./socket";
 import type { RoomState } from "./types";
 import IDL from "../idl/pitch_battle.json";
+import { NeonHeading, NeonButton, CRTCard, ScoreBar } from "@/retro";
+import { cn } from "@/lib/utils";
+import { Input } from "@/components/ui/input";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 
 // ─── Static config (overridable by /api/oracle/pubkey on mount) ─────────────
 const DEFAULT_PROGRAM_ID = "2eMwChdNVoxeoWjdaiTuBGasDiHCKN3jbw7dL5eSyuZf";
@@ -360,7 +371,10 @@ export default function Host() {
       addLog("✅ Match fully staked — backend oracle can settle. Starting turns…");
 
       socket.emit("match:set_id", { code: room.code, matchId });
-      socket.emit("game:start", { code: room.code });
+      // Solo (no phone joined): tell the server to inject the demo key as P2 so
+      // the turn flow runs; you sing both takes into this laptop.
+      const soloP2Wallet = room.players.length < 2 ? demoP2.publicKey.toBase58() : undefined;
+      socket.emit("game:start", { code: room.code, soloP2Wallet });
     } catch (e: any) {
       // Mirror to devtools console with the full object for stack/inspection.
       // eslint-disable-next-line no-console
@@ -462,153 +476,187 @@ export default function Host() {
     : null;
   const scoreFor = (idx: 0 | 1) => finish?.scores[idx]?.score ?? null;
 
+  const labelCls = "font-display text-[10px] uppercase tracking-widest text-muted-foreground";
+  const monoCls = "font-mono text-xs break-all text-foreground/80";
+
   return (
-    <div style={styles.root}>
-      <div style={styles.inner}>
+    <div className="relative z-10 min-h-screen px-4 py-8 text-foreground">
+      <div className="mx-auto w-full max-w-xl">
         {/* Header */}
-        <div style={styles.header}>
-          <h1 style={styles.title}>🎤 Pitch Battle</h1>
+        <div className="mb-8 flex items-center justify-between gap-4">
+          <NeonHeading className="text-lg sm:text-xl">PITCH&nbsp;BATTLE</NeonHeading>
           <WalletMultiButton />
         </div>
 
         {/* Lobby */}
         {phase === "lobby" && (
-          <div style={styles.card}>
-            <div style={styles.cardTitle}>Create a Game</div>
-
-            <div style={{ marginTop: 12 }}>
-              <label style={styles.label}>Song</label>
-              <select
-                style={styles.input}
+          <CRTCard title="Create a Game" className="space-y-4">
+            <div className="space-y-1.5">
+              <label className={labelCls}>Song</label>
+              <Select
                 value={selectedSongId}
-                onChange={(e) => setSelectedSongId(e.target.value)}
+                onValueChange={setSelectedSongId}
                 disabled={songs.length === 0}
               >
-                {songs.length === 0 && <option>Loading…</option>}
-                {songs.map((s) => (
-                  <option key={s.song_id} value={s.song_id}>
-                    {s.title} — {s.artist} (diff {s.difficulty})
-                  </option>
-                ))}
-              </select>
+                <SelectTrigger className="w-full font-body text-base">
+                  <SelectValue placeholder={songs.length ? "Pick a song" : "Loading…"} />
+                </SelectTrigger>
+                <SelectContent>
+                  {songs.map((s) => (
+                    <SelectItem key={s.song_id} value={s.song_id}>
+                      {s.title} — {s.artist} (diff {s.difficulty})
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </div>
 
-            <div>
-              <label style={styles.label}>Wager (SOL)</label>
-              <input
-                style={styles.input}
+            <div className="space-y-1.5">
+              <label className={labelCls}>Wager (SOL)</label>
+              <Input
                 type="number"
                 step="0.01"
                 min="0.001"
                 value={stakeSOL}
                 onChange={(e) => setStakeSOL(e.target.value)}
+                className="font-body text-base"
               />
             </div>
 
             {oracle && (
-              <div style={{ ...styles.label, marginBottom: 8 }}>
-                Backend oracle: <span style={styles.mono}>{oracle.oracle_pubkey.slice(0, 16)}…</span>
-                {" "}({oracle.escrow_mode})
+              <div className={labelCls}>
+                Oracle: <span className={monoCls}>{oracle.oracle_pubkey.slice(0, 16)}…</span>{" "}
+                <span className="text-cyan">({oracle.escrow_mode})</span>
               </div>
             )}
 
             {oracle?.escrow_mode === "devnet" && (
-              <div style={{ ...styles.label, marginBottom: 8, color: p2Bal !== null && p2Bal < 0.015 ? "#f87171" : "#6b7280" }}>
-                Demo P2 stake key: <span style={styles.mono}>{demoP2.publicKey.toBase58().slice(0, 16)}…</span>
+              <div className={cn(labelCls, p2Bal !== null && p2Bal < 0.015 && "text-destructive")}>
+                Demo P2 key: <span className={monoCls}>{demoP2.publicKey.toBase58().slice(0, 16)}…</span>
                 {p2Bal !== null && ` (${p2Bal.toFixed(3)} SOL)`}
               </div>
             )}
 
-            <Btn
+            <NeonButton
               onClick={createRoom}
-              busy={busy}
-              disabled={!wallet.publicKey || !selectedSongId}
+              disabled={busy || !wallet.publicKey || !selectedSongId}
+              size="lg"
+              className="w-full"
             >
-              {wallet.publicKey ? "Create Room" : "Connect Wallet First"}
-            </Btn>
-          </div>
+              {busy ? "…" : wallet.publicKey ? "▶ Create Room" : "Connect Wallet First"}
+            </NeonButton>
+          </CRTCard>
         )}
 
         {/* Waiting */}
         {phase === "waiting" && room && (
-          <div style={styles.card}>
-            <div style={styles.cardTitle}>Share the Code</div>
-            <div style={styles.bigCode}>{room.code}</div>
+          <CRTCard title="Share the Code" glow="cyan" className="text-center">
+            <div className="font-display text-cyan text-glow my-4 text-4xl tracking-[0.3em]">
+              {room.code}
+            </div>
             {joinUrl && (
-              <div style={{ display: "flex", justifyContent: "center", margin: "16px 0", background: "#fff", padding: 16, borderRadius: 12 }}>
+              <div className="mx-auto my-4 w-fit rounded-xl bg-white p-4">
                 <QRCode value={joinUrl} size={180} />
               </div>
             )}
-            <div style={{ color: "#9ca3af", fontSize: 12, textAlign: "center", marginBottom: 16, wordBreak: "break-all" }}>
-              {joinUrl}
+            <div className="mb-4 break-all text-xs text-muted-foreground">{joinUrl}</div>
+            <div className={cn(labelCls, "mb-2 text-left")}>
+              Players joined: {room.players.length} / 2
             </div>
-            <div style={styles.label}>Players joined: {room.players.length} / 2</div>
-            {room.players.map((p) => (
-              <div key={p.wallet} style={styles.playerRow}>
-                <span style={{ color: "#4ade80" }}>✓</span> {p.name} — {p.wallet.slice(0, 10)}…
-              </div>
-            ))}
-            {room.players.length === 2 && (
-              <Btn onClick={startGame} busy={busy} color="#8b5cf6" style={{ marginTop: 16 }}>
-                Start Game &amp; Lock Wagers
-              </Btn>
+            <div className="space-y-1 text-left">
+              {room.players.map((p) => (
+                <div key={p.wallet} className="border-b border-border/50 py-1.5 font-mono text-sm">
+                  <span className="text-lime text-glow-sm">✓</span> {p.name} — {p.wallet.slice(0, 10)}…
+                </div>
+              ))}
+            </div>
+            {room.players.length >= 1 && (
+              <NeonButton onClick={startGame} disabled={busy} variant="lime" size="lg" className="mt-4 w-full">
+                {busy
+                  ? "…"
+                  : room.players.length >= 2
+                    ? "🔒 Start Game & Lock Wagers"
+                    : "🎤 Start Solo (you sing both turns)"}
+              </NeonButton>
             )}
-          </div>
+          </CRTCard>
         )}
 
         {/* Gaming */}
         {phase === "gaming" && room && (
-          <div style={styles.card}>
-            <div style={styles.cardTitle}>
-              {currentTurn ? `🔴 ${currentTurn.player} singing…` : "Get Ready"}
-            </div>
-            {currentTurn && (
+          <CRTCard title={currentTurn ? "Now Singing" : "Get Ready"} glow="magenta" className="space-y-4">
+            {currentTurn ? (
               <>
-                <div style={{ color: "#9ca3af", fontSize: 13, margin: "12px 0" }}>
+                <div className="flex items-center gap-3">
+                  <motion.span
+                    animate={{ opacity: [1, 0.3, 1] }}
+                    transition={{ repeat: Infinity, duration: 1.1 }}
+                    className="inline-block h-3 w-3 rounded-full bg-destructive shadow-[0_0_10px_#ff3864]"
+                  />
+                  <span className="font-display text-magenta text-glow text-base">
+                    {currentTurn.player}
+                  </span>
+                </div>
+                <div className="font-mono text-xs text-muted-foreground">
                   {currentTurn.wallet.slice(0, 10)}… — recording from this laptop's mic
                 </div>
-                <Btn onClick={endTurn} busy={false} color="#4ade80">
+                <NeonButton onClick={endTurn} variant="lime" size="lg" className="w-full">
                   End {currentTurn.player} Turn
-                </Btn>
+                </NeonButton>
               </>
+            ) : (
+              <div className="font-mono text-sm text-muted-foreground">Waiting for the turn to start…</div>
             )}
-            <div style={{ marginTop: 20, ...styles.label }}>Song: {selectedSongId}</div>
-          </div>
+            <div className={labelCls}>Song: {selectedSongId}</div>
+          </CRTCard>
         )}
 
         {/* Scoring */}
         {phase === "scoring" && (
-          <div style={styles.card}>
-            <div style={styles.cardTitle}>Scoring…</div>
-            <div style={{ color: "#9ca3af", fontSize: 13, marginTop: 8 }}>
+          <CRTCard title="Scoring" glow="purple">
+            <div className="flex items-center gap-3">
+              <motion.span
+                animate={{ rotate: 360 }}
+                transition={{ repeat: Infinity, duration: 1, ease: "linear" }}
+                className="inline-block h-4 w-4 rounded-full border-2 border-purple border-t-transparent"
+              />
+              <span className="font-display text-purple text-glow text-sm">Analyzing both takes…</span>
+            </div>
+            <div className="mt-3 font-mono text-xs text-muted-foreground">
               Backend is running pyin on both takes. Hold tight.
             </div>
-          </div>
+          </CRTCard>
         )}
 
         {/* Finished */}
         {phase === "finished" && room && finish && (
-          <div style={styles.card}>
-            <div style={styles.cardTitle}>Game Over</div>
-            {room.players.map((p, i) => {
-              const s = scoreFor(i as 0 | 1);
-              const isWinner = p.wallet === winnerWallet;
-              return (
-                <div
-                  key={p.wallet}
-                  style={{
-                    ...styles.playerRow,
-                    color: isWinner ? "#4ade80" : "#fff",
-                    fontWeight: isWinner ? 700 : 400,
-                  }}
-                >
-                  {isWinner ? "🏆 " : ""}{p.name}: {s ?? "—"}/100
-                </div>
-              );
-            })}
+          <CRTCard title="Game Over" className="space-y-5">
+            <div className="flex items-center justify-center gap-4">
+              <NeonHeading as="h2" color="lime" className="text-base">
+                {finish.winner === "tie" ? "TIE!" : `${finish.winner.toUpperCase()} WINS`}
+              </NeonHeading>
+            </div>
 
-            <div style={{ marginTop: 16, color: "#e5e7eb", fontSize: 14, fontStyle: "italic" }}>
-              "{finish.commentary}"
+            <div className="space-y-4">
+              {room.players.map((p, i) => {
+                const s = scoreFor(i as 0 | 1);
+                const isWinner = p.wallet === winnerWallet;
+                return (
+                  <div key={p.wallet} className="space-y-1.5">
+                    <div className="flex items-center justify-between font-mono text-sm">
+                      <span className={isWinner ? "text-lime text-glow-sm" : "text-foreground"}>
+                        {isWinner ? "🏆 " : ""}{p.name}
+                      </span>
+                      <span className="font-display text-xs">{s ?? "—"}/100</span>
+                    </div>
+                    <ScoreBar value={s ?? 0} color={isWinner ? "lime" : "magenta"} />
+                  </div>
+                );
+              })}
+            </div>
+
+            <div className="border-l-2 border-magenta pl-3 font-body text-base italic text-foreground/90">
+              “{finish.commentary}”
             </div>
 
             {finish.mc_audio_url && (
@@ -616,43 +664,46 @@ export default function Host() {
                 controls
                 autoPlay
                 src={`${API_BASE}${finish.mc_audio_url}`}
-                style={{ marginTop: 12, width: "100%" }}
+                className="w-full"
               />
             )}
 
-            <div style={{ ...styles.label, marginTop: 16 }}>Payout</div>
-            <div style={styles.mono}>{finish.payout_tx}</div>
-            {finish.payout_tx.length > 50 && oracle?.escrow_mode === "devnet" && (
-              <a
-                href={`https://explorer.solana.com/tx/${finish.payout_tx}?cluster=devnet`}
-                target="_blank" rel="noreferrer"
-                style={{ color: "#60a5fa", fontSize: 12 }}
-              >
-                view on explorer ↗
-              </a>
-            )}
+            <div className="space-y-1">
+              <div className={labelCls}>Payout</div>
+              <div className={monoCls}>{finish.payout_tx}</div>
+              {finish.payout_tx.length > 50 && oracle?.escrow_mode === "devnet" && (
+                <a
+                  href={`https://explorer.solana.com/tx/${finish.payout_tx}?cluster=devnet`}
+                  target="_blank" rel="noreferrer"
+                  className="text-xs text-cyan underline-offset-4 hover:underline"
+                >
+                  view on explorer ↗
+                </a>
+              )}
+            </div>
 
             {finish.leaderboard?.length > 0 && (
-              <>
-                <div style={{ ...styles.label, marginTop: 16 }}>Leaderboard</div>
+              <div className="space-y-1">
+                <div className={labelCls}>Leaderboard</div>
                 {finish.leaderboard.slice(0, 5).map((row, i) => (
-                  <div key={i} style={styles.playerRow}>
-                    {row.player}: {row.wins}W / {row.losses}L
+                  <div key={i} className="border-b border-border/50 py-1 font-mono text-sm">
+                    {row.player}: <span className="text-lime">{row.wins}W</span> / <span className="text-destructive">{row.losses}L</span>
                   </div>
                 ))}
-              </>
+              </div>
             )}
-          </div>
+          </CRTCard>
         )}
 
         {/* Log */}
-        <div style={{ ...styles.card, background: "#0f0f0f", marginTop: 8 }}>
-          <div style={styles.label}>Log</div>
-          <div style={{ marginTop: 6, maxHeight: 150, overflowY: "auto" }}>
-            {log.length === 0 && <div style={{ color: "#555", fontSize: 12 }}>Events will appear here</div>}
-            {log.map((l, i) => <div key={i} style={{ fontSize: 12, color: "#9ca3af", marginBottom: 2 }}>{l}</div>)}
+        <CRTCard title="Log" glow="purple" animate={false} className="mt-3 bg-card/60">
+          <div className="max-h-40 space-y-0.5 overflow-y-auto">
+            {log.length === 0 && <div className="text-xs text-muted-foreground/60">Events will appear here</div>}
+            {log.map((l, i) => (
+              <div key={i} className="font-mono text-xs text-muted-foreground">{l}</div>
+            ))}
           </div>
-        </div>
+        </CRTCard>
       </div>
     </div>
   );
@@ -665,40 +716,4 @@ function pickMime(): string {
     if (typeof MediaRecorder !== "undefined" && MediaRecorder.isTypeSupported(m)) return m;
   }
   return "";
-}
-
-const styles: Record<string, React.CSSProperties> = {
-  root: { minHeight: "100vh", background: "#0a0a0a", color: "#fff", fontFamily: "system-ui, sans-serif", padding: 24 },
-  inner: { maxWidth: 560, margin: "0 auto" },
-  header: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 32 },
-  title: { margin: 0, fontSize: 22, fontWeight: 700 },
-  card: { background: "#111", border: "1px solid #222", borderRadius: 12, padding: 20, marginBottom: 12 },
-  cardTitle: { fontSize: 16, fontWeight: 600, marginBottom: 8, color: "#e5e7eb" },
-  label: { color: "#6b7280", fontSize: 11, textTransform: "uppercase" as const, letterSpacing: 1 },
-  mono: { fontFamily: "monospace", fontSize: 12, wordBreak: "break-all" as const, color: "#e5e7eb" },
-  bigCode: { fontSize: 64, fontWeight: 900, letterSpacing: 12, textAlign: "center" as const, color: "#facc15", padding: "20px 0" },
-  input: { display: "block", width: "100%", background: "#1a1a1a", border: "1px solid #333", borderRadius: 6, padding: "8px 12px", color: "#fff", fontSize: 16, marginTop: 4, marginBottom: 16 },
-  playerRow: { padding: "6px 0", borderBottom: "1px solid #1a1a1a", fontSize: 14, fontFamily: "monospace" },
-};
-
-function Btn({ onClick, busy, disabled, children, color, style }: {
-  onClick: () => void; busy: boolean; disabled?: boolean;
-  children: React.ReactNode; color?: string; style?: React.CSSProperties;
-}) {
-  return (
-    <button
-      onClick={onClick}
-      disabled={busy || disabled}
-      style={{
-        background: busy || disabled ? "#222" : (color ?? "#3b82f6"),
-        color: busy || disabled ? "#555" : "#fff",
-        border: "none", borderRadius: 8, padding: "10px 20px",
-        cursor: busy || disabled ? "not-allowed" : "pointer",
-        fontSize: 14, fontWeight: 600, width: "100%",
-        ...style,
-      }}
-    >
-      {busy ? "…" : children}
-    </button>
-  );
 }

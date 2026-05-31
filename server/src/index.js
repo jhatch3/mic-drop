@@ -82,8 +82,8 @@ io.on("connection", (socket) => {
 
   // ── game:start ───────────────────────────────────────────────────────────
   // payload: { code: string }
-  socket.on("game:start", ({ code } = {}) => {
-    const result = startGame(code?.toUpperCase());
+  socket.on("game:start", ({ code, soloP2Wallet } = {}) => {
+    const result = startGame(code?.toUpperCase(), soloP2Wallet);
     if (result.error) return socket.emit("error", { msg: result.error });
     broadcast(result.room.code, "game:started", publicRoom(result.room));
     broadcast(result.room.code, "turn:start", { player: "P1", wallet: result.room.players[0].wallet });

@@ -1,3 +1,4 @@
+import "./index.css";
 import { StrictMode, useMemo } from "react";
 import { createRoot } from "react-dom/client";
 import { ConnectionProvider, WalletProvider } from "@solana/wallet-adapter-react";
@@ -8,6 +9,7 @@ import App from "./App";
 import Host from "./game/Host";
 import Player from "./game/Player";
 import Karaoke from "./game/Karaoke";
+import { RetroBackground, Scanlines } from "./retro";
 
 // Resolve the RPC endpoint with a clear, RUNTIME-overridable precedence so a
 // stale build (or a deploy missing VITE_RPC_URL) can't silently strand us on the
@@ -58,7 +60,9 @@ function Root() {
     <ConnectionProvider endpoint={RPC}>
       <WalletProvider wallets={wallets} autoConnect>
         <WalletModalProvider>
+          <RetroBackground />
           <Router />
+          <Scanlines />
         </WalletModalProvider>
       </WalletProvider>
     </ConnectionProvider>
