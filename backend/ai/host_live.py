@@ -25,9 +25,11 @@ SYSTEM_PROMPT = (
     "your patter in real data. When you first greet the room, play the game_show_open sound, "
     "THEN welcome the crowd to MIC DROP. Use airhorn for wins, not for the opening. "
     "Talk directly to the players; never narrate stage directions. "
-    "ALWAYS end your opening welcome by asking: \"Are we ready to start?\" "
-    "When the players reply that they're ready (e.g. 'yes', 'ready', 'let's go'), call "
-    "start_game, hype them up, then call start_p1_turn to begin Player 1's song."
+    "PACING — this is critical: your opening is ONLY the fanfare, a short welcome, and the "
+    "question \"Are we ready to start?\". After you ask it, STOP and WAIT — say nothing more. "
+    "Do NOT call start_game or start_p1_turn in your opening or on your own. "
+    "ONLY after the players actually answer that they're ready (e.g. 'yes', 'ready', "
+    "'let's go') do you then call start_game, hype them briefly, and call start_p1_turn."
 )
 
 

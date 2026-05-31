@@ -87,6 +87,15 @@ async def host_ws(ws: WebSocket) -> None:
 
             async def gemini_to_browser() -> None:
                 async for m in session.receive():
+                    sc0 = m.server_content
+                    log.warning("host_ws RX gemini: tool=%s turn_complete=%s interrupted=%s "
+                                "in_tx=%s out_tx=%s model_turn=%s",
+                                bool(m.tool_call),
+                                getattr(sc0, "turn_complete", None) if sc0 else None,
+                                getattr(sc0, "interrupted", None) if sc0 else None,
+                                bool(sc0 and sc0.input_transcription and sc0.input_transcription.text),
+                                bool(sc0 and sc0.output_transcription and sc0.output_transcription.text),
+                                bool(sc0 and sc0.model_turn))
                     if m.tool_call:
                         for fc in m.tool_call.function_calls:
                             response, action = await dispatch(fc.name, dict(fc.args or {}))
