@@ -108,7 +108,7 @@ def extract(video_path: Path, output_path: Path) -> None:
 def main() -> None:
     parser = argparse.ArgumentParser(description="Extract MediaPipe Pose landmarks from a reference video.")
     parser.add_argument("--video", type=Path, default=Path("reference.mp4"))
-    parser.add_argument("--output", type=Path, default=Path("reference_poses.json"))
+    parser.add_argument("--output", type=Path, default=Path("../../assets/dances/references/reference_poses.json"))
     args = parser.parse_args()
     extract(args.video, args.output)
 
