@@ -69,6 +69,9 @@ interface ScoreRow {
   score: number;
   frames_scored: number;
   frames_hit: number;
+  pitch_score?: number;
+  lyrics_score?: number;
+  transcript?: string;
 }
 
 interface FinishResponse {
@@ -690,7 +693,8 @@ export default function Host() {
 
             <div className="space-y-4">
               {room.players.map((p, i) => {
-                const s = scoreFor(i as 0 | 1);
+                const row = finish.scores[i];
+                const s = row?.score ?? null;
                 const isWinner = p.wallet === winnerWallet;
                 return (
                   <div key={p.wallet} className="space-y-1.5">
@@ -701,6 +705,17 @@ export default function Host() {
                       <span className="font-display text-xs">{s ?? "—"}/100</span>
                     </div>
                     <ScoreBar value={s ?? 0} color={isWinner ? "lime" : "magenta"} />
+                    {(row?.pitch_score != null || row?.lyrics_score != null) && (
+                      <div className="flex gap-4 font-mono text-[11px] text-muted-foreground">
+                        <span>🎵 pitch {row?.pitch_score ?? "—"}</span>
+                        <span>📝 lyrics {row?.lyrics_score ?? "—"}</span>
+                      </div>
+                    )}
+                    {row?.transcript && (
+                      <div className="font-mono text-[11px] text-muted-foreground/70 italic break-words">
+                        heard: “{row.transcript}”
+                      </div>
+                    )}
                   </div>
                 );
               })}
