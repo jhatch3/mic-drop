@@ -3,69 +3,565 @@
   "segment_start_sec": 70.0,
   "lines": [
     {
-      "t": 2.78,
+      "t": 0.3,
+      "end": 6.12,
       "text": "Come on, let your colors burst",
-      "end": 6.74
+      "words": [
+        {
+          "word": "Come",
+          "start": 0.3,
+          "end": 1.16
+        },
+        {
+          "word": "on,",
+          "start": 1.58,
+          "end": 1.72
+        },
+        {
+          "word": "let",
+          "start": 1.96,
+          "end": 2.18
+        },
+        {
+          "word": "your",
+          "start": 3.18,
+          "end": 3.66
+        },
+        {
+          "word": "colors",
+          "start": 3.92,
+          "end": 4.08
+        },
+        {
+          "word": "burst",
+          "start": 4.16,
+          "end": 6.12
+        }
+      ]
     },
     {
-      "t": 6.74,
+      "t": 6.3,
+      "end": 9.96,
       "text": "Make 'em go, \"Ah, ah, ah\"",
-      "end": 9.89
+      "words": [
+        {
+          "word": "Make",
+          "start": 6.3,
+          "end": 6.54
+        },
+        {
+          "word": "'em",
+          "start": 7.0,
+          "end": 7.52
+        },
+        {
+          "word": "go,",
+          "start": 7.56,
+          "end": 7.96
+        },
+        {
+          "word": "\"Ah,",
+          "start": 7.98,
+          "end": 8.54
+        },
+        {
+          "word": "ah,",
+          "start": 8.9,
+          "end": 9.0
+        },
+        {
+          "word": "ah\"",
+          "start": 9.84,
+          "end": 9.96
+        }
+      ]
     },
     {
-      "t": 9.89,
+      "t": 10.22,
+      "end": 16.27,
       "text": "You're gonna leave them all in awe, awe, awe",
-      "end": 15.82
+      "words": [
+        {
+          "word": "You're",
+          "start": 10.22,
+          "end": 10.4
+        },
+        {
+          "word": "gonna",
+          "start": 10.46,
+          "end": 10.92
+        },
+        {
+          "word": "leave",
+          "start": 10.96,
+          "end": 11.4
+        },
+        {
+          "word": "them",
+          "start": 11.44,
+          "end": 11.9
+        },
+        {
+          "word": "all",
+          "start": 12.26,
+          "end": 12.38
+        },
+        {
+          "word": "in",
+          "start": 12.76,
+          "end": 12.86
+        },
+        {
+          "word": "awe,",
+          "start": 13.2,
+          "end": 13.89
+        },
+        {
+          "word": "awe,",
+          "start": 14.11,
+          "end": 14.79
+        },
+        {
+          "word": "awe",
+          "start": 15.17,
+          "end": 16.27
+        }
+      ]
     },
     {
-      "t": 15.82,
+      "t": 16.31,
+      "end": 19.41,
       "text": "You don't have to feel like a wasted space",
-      "end": 19.84
+      "words": [
+        {
+          "word": "You",
+          "start": 16.31,
+          "end": 16.47
+        },
+        {
+          "word": "don't",
+          "start": 16.55,
+          "end": 16.71
+        },
+        {
+          "word": "have",
+          "start": 16.81,
+          "end": 17.53
+        },
+        {
+          "word": "to",
+          "start": 17.55,
+          "end": 17.73
+        },
+        {
+          "word": "feel",
+          "start": 17.75,
+          "end": 17.83
+        },
+        {
+          "word": "like",
+          "start": 18.21,
+          "end": 18.37
+        },
+        {
+          "word": "a",
+          "start": 18.55,
+          "end": 18.67
+        },
+        {
+          "word": "wasted",
+          "start": 18.71,
+          "end": 18.89
+        },
+        {
+          "word": "space",
+          "start": 19.05,
+          "end": 19.41
+        }
+      ]
     },
     {
-      "t": 19.84,
+      "t": 19.45,
+      "end": 23.71,
       "text": "You're original, cannot be replaced",
-      "end": 23.73
+      "words": [
+        {
+          "word": "You're",
+          "start": 19.45,
+          "end": 20.61
+        },
+        {
+          "word": "original,",
+          "start": 20.63,
+          "end": 21.47
+        },
+        {
+          "word": "cannot",
+          "start": 22.09,
+          "end": 22.49
+        },
+        {
+          "word": "be",
+          "start": 22.57,
+          "end": 22.77
+        },
+        {
+          "word": "replaced",
+          "start": 22.81,
+          "end": 23.71
+        }
+      ]
     },
     {
-      "t": 23.73,
+      "t": 24.09,
+      "end": 27.37,
       "text": "If you only knew what the future holds",
-      "end": 27.32
+      "words": [
+        {
+          "word": "If",
+          "start": 24.09,
+          "end": 24.15
+        },
+        {
+          "word": "you",
+          "start": 24.29,
+          "end": 24.69
+        },
+        {
+          "word": "only",
+          "start": 24.83,
+          "end": 24.93
+        },
+        {
+          "word": "knew",
+          "start": 24.95,
+          "end": 25.59
+        },
+        {
+          "word": "what",
+          "start": 25.95,
+          "end": 26.11
+        },
+        {
+          "word": "the",
+          "start": 26.43,
+          "end": 26.63
+        },
+        {
+          "word": "future",
+          "start": 26.69,
+          "end": 27.17
+        },
+        {
+          "word": "holds",
+          "start": 27.23,
+          "end": 27.37
+        }
+      ]
     },
     {
-      "t": 27.32,
+      "t": 27.75,
+      "end": 31.45,
       "text": "After a hurricane comes a rainbow",
-      "end": 31.16
+      "words": [
+        {
+          "word": "After",
+          "start": 27.75,
+          "end": 28.11
+        },
+        {
+          "word": "a",
+          "start": 28.23,
+          "end": 28.33
+        },
+        {
+          "word": "hurricane",
+          "start": 28.41,
+          "end": 29.31
+        },
+        {
+          "word": "comes",
+          "start": 29.83,
+          "end": 30.25
+        },
+        {
+          "word": "a",
+          "start": 30.49,
+          "end": 30.69
+        },
+        {
+          "word": "rainbow",
+          "start": 30.79,
+          "end": 31.45
+        }
+      ]
     },
     {
-      "t": 31.16,
+      "t": 31.55,
+      "end": 35.15,
       "text": "Maybe a reason why all the doors are closed",
-      "end": 35.06
+      "words": [
+        {
+          "word": "Maybe",
+          "start": 31.55,
+          "end": 31.99
+        },
+        {
+          "word": "a",
+          "start": 32.11,
+          "end": 32.21
+        },
+        {
+          "word": "reason",
+          "start": 32.25,
+          "end": 32.61
+        },
+        {
+          "word": "why",
+          "start": 32.65,
+          "end": 33.27
+        },
+        {
+          "word": "all",
+          "start": 33.75,
+          "end": 33.89
+        },
+        {
+          "word": "the",
+          "start": 33.93,
+          "end": 34.09
+        },
+        {
+          "word": "doors",
+          "start": 34.17,
+          "end": 34.37
+        },
+        {
+          "word": "are",
+          "start": 34.49,
+          "end": 34.57
+        },
+        {
+          "word": "closed",
+          "start": 34.67,
+          "end": 35.15
+        }
+      ]
     },
     {
-      "t": 35.06,
+      "t": 35.39,
+      "end": 38.9,
       "text": "So you could open one that leads you to the perfect road",
-      "end": 39.15
+      "words": [
+        {
+          "word": "So",
+          "start": 35.39,
+          "end": 35.53
+        },
+        {
+          "word": "you",
+          "start": 35.57,
+          "end": 35.73
+        },
+        {
+          "word": "could",
+          "start": 35.85,
+          "end": 36.17
+        },
+        {
+          "word": "open",
+          "start": 36.23,
+          "end": 36.53
+        },
+        {
+          "word": "one",
+          "start": 36.7,
+          "end": 36.76
+        },
+        {
+          "word": "that",
+          "start": 36.84,
+          "end": 37.06
+        },
+        {
+          "word": "leads",
+          "start": 37.1,
+          "end": 37.32
+        },
+        {
+          "word": "you",
+          "start": 37.35,
+          "end": 37.48
+        },
+        {
+          "word": "to",
+          "start": 37.58,
+          "end": 37.78
+        },
+        {
+          "word": "the",
+          "start": 37.84,
+          "end": 37.96
+        },
+        {
+          "word": "perfect",
+          "start": 38.06,
+          "end": 38.66
+        },
+        {
+          "word": "road",
+          "start": 38.67,
+          "end": 38.9
+        }
+      ]
     },
     {
-      "t": 39.15,
+      "t": 38.92,
+      "end": 43.06,
       "text": "Like a lightning bolt, your heart will glow",
-      "end": 42.81
+      "words": [
+        {
+          "word": "Like",
+          "start": 38.92,
+          "end": 39.5
+        },
+        {
+          "word": "a",
+          "start": 39.6,
+          "end": 39.68
+        },
+        {
+          "word": "lightning",
+          "start": 39.7,
+          "end": 40.4
+        },
+        {
+          "word": "bolt,",
+          "start": 40.5,
+          "end": 40.88
+        },
+        {
+          "word": "your",
+          "start": 41.22,
+          "end": 41.44
+        },
+        {
+          "word": "heart",
+          "start": 41.7,
+          "end": 41.84
+        },
+        {
+          "word": "will",
+          "start": 41.94,
+          "end": 42.38
+        },
+        {
+          "word": "glow",
+          "start": 42.44,
+          "end": 43.06
+        }
+      ]
     },
     {
-      "t": 42.81,
+      "t": 43.22,
+      "end": 44.84,
       "text": "And when it's time, you'll know",
-      "end": 45.07
+      "words": [
+        {
+          "word": "And",
+          "start": 43.22,
+          "end": 43.36
+        },
+        {
+          "word": "when",
+          "start": 43.44,
+          "end": 43.64
+        },
+        {
+          "word": "it's",
+          "start": 43.7,
+          "end": 43.78
+        },
+        {
+          "word": "time,",
+          "start": 43.88,
+          "end": 44.14
+        },
+        {
+          "word": "you'll",
+          "start": 44.38,
+          "end": 44.7
+        },
+        {
+          "word": "know",
+          "start": 44.72,
+          "end": 44.84
+        }
+      ]
     },
     {
-      "t": 45.07,
+      "t": 44.86,
+      "end": 47.72,
       "text": "You just gotta ignite the light",
-      "end": 49.82
+      "words": [
+        {
+          "word": "You",
+          "start": 44.86,
+          "end": 44.98
+        },
+        {
+          "word": "just",
+          "start": 45.06,
+          "end": 45.26
+        },
+        {
+          "word": "gotta",
+          "start": 45.28,
+          "end": 45.54
+        },
+        {
+          "word": "ignite",
+          "start": 45.62,
+          "end": 46.22
+        },
+        {
+          "word": "the",
+          "start": 46.56,
+          "end": 47.22
+        },
+        {
+          "word": "light",
+          "start": 47.26,
+          "end": 47.72
+        }
+      ]
     },
     {
-      "t": 49.82,
+      "t": 47.82,
+      "end": 49.42,
       "text": "And let it shine",
-      "end": 50.0
+      "words": [
+        {
+          "word": "And",
+          "start": 47.82,
+          "end": 47.94
+        },
+        {
+          "word": "let",
+          "start": 47.96,
+          "end": 48.14
+        },
+        {
+          "word": "it",
+          "start": 48.32,
+          "end": 48.4
+        },
+        {
+          "word": "shine",
+          "start": 48.48,
+          "end": 49.42
+        }
+      ]
     }
   ]
 }
