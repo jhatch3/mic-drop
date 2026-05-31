@@ -511,8 +511,22 @@ export default function Host() {
               </Btn>
             )}
             {waitingForP2Stake && (
-              <div style={{ marginTop: 16, color: "#facc15", fontSize: 14, textAlign: "center" }}>
-                ⏳ Waiting for P2 to stake from their phone…
+              <div style={{ marginTop: 16 }}>
+                <div style={{ color: "#facc15", fontSize: 14, textAlign: "center", marginBottom: 12 }}>
+                  ⏳ Waiting for P2 to stake from their phone…
+                </div>
+                <Btn
+                  onClick={() => {
+                    socket.emit("match:set_id", { code: room!.code, matchId: room!.code });
+                    socket.emit("game:start", { code: room!.code });
+                    setWaitingForP2Stake(false);
+                  }}
+                  busy={false}
+                  color="#374151"
+                  style={{ fontSize: 12 }}
+                >
+                  P2 staked on their phone? Start manually →
+                </Btn>
               </div>
             )}
           </div>
