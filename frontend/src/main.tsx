@@ -8,6 +8,7 @@ import App from "./App";
 import Host from "./game/Host";
 import Player from "./game/Player";
 import Karaoke from "./game/Karaoke";
+import LocalGame from "./game/LocalGame";
 
 // Resolve the RPC endpoint with a clear, RUNTIME-overridable precedence so a
 // stale build (or a deploy missing VITE_RPC_URL) can't silently strand us on the
@@ -49,6 +50,7 @@ function Router() {
   if (path === "/host") return <Host />;
   if (path === "/play") return <Player />;
   if (path === "/karaoke") return <Karaoke />;
+  if (path === "/local") return <LocalGame />;
   return <App />;
 }
 

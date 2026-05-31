@@ -5,7 +5,4 @@ services:
     rootDir: server
     buildCommand: npm install
     startCommand: node src/index.js
-    envVars:
-      - key: PORT
-        value: 3001
     healthCheckPath: /health
