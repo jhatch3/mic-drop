@@ -1,0 +1,201 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Pitch Battle — AI MC Test</title>
+<style>
+  :root { color-scheme: dark; }
+  body { font-family: system-ui, sans-serif; max-width: 680px; margin: 40px auto;
+         padding: 0 16px; background: #111; color: #eee; }
+  h1 { font-size: 1.3rem; }
+  button { font-size: 1rem; padding: 10px 18px; border-radius: 8px; border: 0;
+           cursor: pointer; background: #457b9d; color: #fff; }
+  button.primary { background: #e63946; }
+  button:disabled { opacity: .5; cursor: default; }
+  input, select, textarea { background: #1b1b1b; color: #eee; border: 1px solid #333;
+           border-radius: 8px; padding: 8px; font-size: 1rem; }
+  textarea { width: 100%; box-sizing: border-box; }
+  label { display: block; margin: 14px 0 6px; font-size: .9rem; color: #aaa; }
+  .row { display: flex; gap: 12px; flex-wrap: wrap; }
+  .row > div { flex: 1; min-width: 120px; }
+  pre { background: #1b1b1b; border: 1px solid #333; border-radius: 8px; padding: 12px;
+        white-space: pre-wrap; word-break: break-word; font-size: 1.05rem; line-height: 1.4; }
+  .status { margin: 12px 0; color: #9ad; min-height: 1.2em; }
+  .muted { color: #888; font-size: .8rem; }
+  .badge { display: inline-block; padding: 2px 8px; border-radius: 6px; font-size: .8rem;
+           font-weight: 600; }
+  .mock { background: #553; color: #fd9; }
+  .real { background: #264; color: #9f9; }
+  #modes { margin: 8px 0 20px; }
+</style>
+</head>
+<body>
+<h1>🎤 Pitch Battle — AI MC Test</h1>
+<p class="muted">Generates a roast via <code>/api/commentary</code> (Gemini, tool-using when real)
+and voices it via <code>/api/mc-voice</code> (ElevenLabs). Flip <code>GEMINI_MODE</code> /
+<code>ELEVENLABS_MODE</code> in <code>.env</code> and restart the server to switch mock⇄real.</p>
+
+<div id="modes" class="muted">checking modes…</div>
+
+<div class="row">
+  <div>
+    <label for="song">Song id</label>
+    <input id="song" value="firework" style="width:100%" />
+  </div>
+  <div>
+    <label for="winner">Winner</label>
+    <select id="winner" style="width:100%">
+      <option value="p1">p1</option>
+      <option value="p2">p2</option>
+      <option value="tie">tie</option>
+    </select>
+  </div>
+</div>
+<div class="row">
+  <div>
+    <label for="p1">Player 1 score</label>
+    <input id="p1" type="number" value="91" style="width:100%" />
+  </div>
+  <div>
+    <label for="p2">Player 2 score</label>
+    <input id="p2" type="number" value="47" style="width:100%" />
+  </div>
+</div>
+<div class="row">
+  <div>
+    <label for="voice">Voice / persona</label>
+    <select id="voice" style="width:100%"><option value="mc">mc (loading…)</option></select>
+  </div>
+  <div>
+    <label for="expressive">Emotion (eleven_v3 audio tags)</label>
+    <select id="expressive" style="width:100%">
+      <option value="false">off — fast (flash)</option>
+      <option value="true">on — expressive (v3)</option>
+    </select>
+  </div>
+</div>
+
+<p style="margin-top:20px">
+  <button id="go" class="primary">🔥 Roast + speak</button>
+  <button id="roast">Roast only</button>
+  <button id="speak" disabled>🔊 Speak last roast</button>
+</p>
+
+<label>Sound effects <span class="muted">(generated on first click, then cached)</span></label>
+<p id="sfx" class="row" style="gap:8px"></p>
+
+<div class="status" id="status"></div>
+<pre id="out">(roast will appear here)</pre>
+<audio id="audio" controls style="width:100%; margin-top:8px"></audio>
+
+<script>
+const $ = id => document.getElementById(id);
+const setStatus = (t) => { $("status").textContent = t; };
+
+async function loadModes() {
+  try {
+    const r = await fetch("/api/ai/status");
+    const s = await r.json();
+    const b = (label, info) => {
+      const cls = info.active ? "real" : "mock";
+      const word = info.active ? "REAL" : "mock";
+      return `<span class="badge ${cls}">${label}: ${word}</span>`;
+    };
+    $("modes").innerHTML =
+      b("Gemini", s.gemini) + " <span class='muted'>" + s.gemini.model + "</span> &nbsp; " +
+      b("ElevenLabs", s.elevenlabs) +
+      (s.elevenlabs.active ? "" : " <span class='muted'>(serves fallback clip" +
+        (s.elevenlabs.fallback_clip ? "" : " — none committed yet") + ")</span>");
+  } catch (e) { $("modes").textContent = "could not reach /api/ai/status"; }
+}
+
+const isExpressive = () => $("expressive").value === "true";
+
+function payload() {
+  return {
+    song: $("song").value.trim(),
+    p1_score: parseInt($("p1").value, 10),
+    p2_score: parseInt($("p2").value, 10),
+    winner: $("winner").value,
+    players: { p1: "DemoPlayer1Pubkey", p2: "DemoPlayer2Pubkey" },
+    expressive: isExpressive(),
+  };
+}
+
+async function getRoast() {
+  setStatus("generating roast…");
+  const t0 = performance.now();
+  const r = await fetch("/api/commentary", {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload()),
+  });
+  const data = await r.json();
+  const ms = Math.round(performance.now() - t0);
+  $("out").textContent = data.commentary;
+  $("speak").disabled = false;
+  setStatus(`roast ready in ${ms} ms`);
+  return data.commentary;
+}
+
+async function speak(text) {
+  setStatus("synthesizing voice…");
+  const t0 = performance.now();
+  const r = await fetch("/api/mc-voice", {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ text, voice: $("voice").value, expressive: isExpressive() }),
+  });
+  const buf = await r.arrayBuffer();
+  const ms = Math.round(performance.now() - t0);
+  if (!buf.byteLength) { setStatus(`no audio returned (${ms} ms) — add an ElevenLabs key or commit a fallback clip`); return; }
+  $("audio").src = URL.createObjectURL(new Blob([buf], { type: "audio/mpeg" }));
+  $("audio").play();
+  setStatus(`spoke ${buf.byteLength} bytes in ${ms} ms`);
+}
+
+async function playSfx(name) {
+  setStatus("loading sfx: " + name + "…");
+  const t0 = performance.now();
+  const r = await fetch("/api/sfx/" + encodeURIComponent(name));
+  if (!r.ok) { setStatus(`sfx "${name}" unavailable (needs ElevenLabs key)`); return; }
+  const buf = await r.arrayBuffer();
+  $("audio").src = URL.createObjectURL(new Blob([buf], { type: "audio/mpeg" }));
+  $("audio").play();
+  setStatus(`played ${name} (${Math.round(performance.now() - t0)} ms)`);
+}
+
+async function loadVoices() {
+  try {
+    const s = await (await fetch("/api/voices")).json();
+    const sel = $("voice"); sel.innerHTML = "";
+    for (const role of Object.keys(s.personas))
+      sel.add(new Option(`${role} (persona)`, role));
+    for (const v of s.account)
+      sel.add(new Option(`${v.name}`, v.voice_id));
+  } catch (e) { /* leave the default option */ }
+}
+
+async function loadSfx() {
+  try {
+    const s = await (await fetch("/api/sfx")).json();
+    const box = $("sfx"); box.innerHTML = "";
+    for (const name of Object.keys(s.catalog)) {
+      const b = document.createElement("button");
+      b.textContent = "▶ " + name;
+      b.onclick = () => playSfx(name).catch(e => setStatus("error: " + e));
+      box.appendChild(b);
+    }
+  } catch (e) { /* no sfx */ }
+}
+
+$("roast").onclick = () => getRoast().catch(e => setStatus("error: " + e));
+$("speak").onclick = () => speak($("out").textContent).catch(e => setStatus("error: " + e));
+$("go").onclick = async () => {
+  try { const text = await getRoast(); await speak(text); }
+  catch (e) { setStatus("error: " + e); }
+};
+
+loadModes(); loadVoices(); loadSfx();
+</script>
+</body>
+</html>

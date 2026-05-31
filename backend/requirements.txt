@@ -22,9 +22,11 @@ snowflake-connector-python
 
 # --- Stream A -> D: backend oracle (settle/refund on devnet) ---
 solders==0.21.0
-solana==0.34.3
+solana==0.34.3            # NOTE: pins websockets<12, conflicts with google-genai (>=13)
+
+# --- Stream D: AI MC (Gemini roast + ElevenLabs voice) ---
+google-genai               # unified Gemini SDK (function calling / tool use)
+elevenlabs                 # MC voice (streaming TTS)
 
 # --- added by other Stream D phases (not yet wired) ---
-# google-generativeai      # Gemini commentary
-# elevenlabs               # MC voice
 # torch / torchcrepe       # Stream B: real pitch scoring (heavyweight)
