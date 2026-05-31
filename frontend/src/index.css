@@ -135,6 +135,11 @@
   from { background-position: 0 0; }
   to { background-position: 0 40px; }
 }
+/* indeterminate loading bar (scoring screen) */
+@keyframes loading {
+  0% { left: -33%; }
+  100% { left: 100%; }
+}
 
 @media (prefers-reduced-motion: reduce) {
   * {

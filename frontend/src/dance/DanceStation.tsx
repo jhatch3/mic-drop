@@ -24,6 +24,7 @@ import { usePoseDetection } from "./usePoseDetection";
 import { useChoreography } from "./useChoreography";
 import PoseOverlay from "./PoseOverlay";
 import type { DanceScore } from "./types";
+import { PAL, FONT, bevelPanel, BevelBtn, Panel, OnAirBar, LowerThird } from "@/ui";
 
 const PROGRAM_ID = new PublicKey("2eMwChdNVoxeoWjdaiTuBGasDiHCKN3jbw7dL5eSyuZf");
 const TREASURY   = new PublicKey("2KnfMtidoDSVYxJDBNEK1e77rVQijvJ71zkBgz6kwejm");
@@ -245,74 +246,106 @@ export default function DanceStation() {
     ? choreo.getFrameAt((performance.now() - playbackStartRef.current) / 1000)
     : null;
 
+  const camLive = phase === "gaming" && dancingActive;
+  const elapsed = camLive ? (performance.now() - playbackStartRef.current) / 1000 : 0;
+  const fmtTimer = (s: number) => `${Math.floor(s / 60)}:${Math.floor(s % 60).toString().padStart(2, "0")}`;
+  const cueHeadline = !currentTurn
+    ? "Waiting for the next dancer to step into frame."
+    : dancingActive
+      ? `${currentTurn.player}, hit your marks and match the moves.`
+      : `${currentTurn.player}, step into frame and press Start.`;
+
   return (
-    <div style={S.root}>
-      <div style={S.inner}>
-        {/* Header */}
-        <div style={S.header}>
-          <h1 style={S.title}>💃 Dance Battle</h1>
+    <div style={{ minHeight: "100vh", background: PAL.purpleDp, color: PAL.white, fontFamily: FONT.body, display: "flex", flexDirection: "column" }}>
+
+      {/* ON-AIR top bar — broadcast style */}
+      <OnAirBar
+        tag={camLive ? "ON AIR" : "STANDBY"}
+        tagColor={camLive ? PAL.red : PAL.cyan}
+        blink={false}
+        left={
+          <span style={{ display: "inline-flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+            <span style={{ fontFamily: FONT.display, fontSize: 16, color: PAL.white, letterSpacing: 0.5, textTransform: "uppercase" }}>
+              Dance Battle
+            </span>
+            {camLive && <span style={{ color: PAL.red, fontFamily: FONT.display, fontSize: 15 }}>● REC</span>}
+            {currentTurn && (
+              <span style={{ fontFamily: FONT.display, fontSize: 13, color: PAL.ink, background: PAL.magenta, border: `2px solid ${PAL.ink}`, padding: "2px 10px", letterSpacing: 1, textTransform: "uppercase" }}>
+                {currentTurn.player}
+              </span>
+            )}
+          </span>
+        }
+        right={
+          <span style={{ display: "inline-flex", alignItems: "center", gap: 10 }}>
+            <span>{fmtTimer(elapsed)}</span>
+          </span>
+        }
+      />
+
+      <div style={{ flex: 1, padding: "20px 16px", display: "flex", flexDirection: "column", gap: 16, maxWidth: 760, width: "100%", margin: "0 auto", boxSizing: "border-box" }}>
+
+        {/* Wallet */}
+        <div style={{ display: "flex", justifyContent: "flex-end" }}>
           <WalletMultiButton />
         </div>
 
         {/* Lobby */}
         {phase === "lobby" && (
-          <div style={S.card}>
-            <div style={S.cardTitle}>Create a Dance Battle</div>
-            <div style={{ marginTop: 12 }}>
-              <label style={S.label}>Wager (SOL)</label>
-              <input
-                style={S.input}
-                type="number" step="0.01" min="0.001"
-                value={stakeSOL}
-                onChange={(e) => setStakeSOL(e.target.value)}
-              />
-            </div>
-            {pose.error && <div style={{ color: "#f87171", fontSize: 12, marginBottom: 8 }}>{pose.error}</div>}
-            <Btn onClick={createRoom} busy={busy} disabled={!wallet.publicKey}>
-              {wallet.publicKey ? "Create Room" : "Connect Wallet First"}
-            </Btn>
-          </div>
+          <Panel color={PAL.cream} title="CREATE A DANCE BATTLE" titleBg={PAL.ink} titleFg={PAL.magenta}>
+            <label style={{ fontFamily: FONT.display, fontSize: 13, letterSpacing: 1.5, textTransform: "uppercase", color: PAL.purpleDp }}>Wager (SOL)</label>
+            <input
+              style={{ display: "block", width: "100%", boxSizing: "border-box", ...bevelPanel(PAL.white, { shadow: 0 }), padding: "10px 12px", color: PAL.ink, fontFamily: FONT.mono, fontSize: 18, marginTop: 6, marginBottom: 16 }}
+              type="number" step="0.01" min="0.001"
+              value={stakeSOL}
+              onChange={(e) => setStakeSOL(e.target.value)}
+            />
+            {pose.error && <div style={{ fontFamily: FONT.mono, fontSize: 14, color: PAL.red, marginBottom: 8 }}>{pose.error}</div>}
+            <BevelBtn color={wallet.publicKey ? PAL.magenta : PAL.cyan} fg={wallet.publicKey ? PAL.white : PAL.ink} onClick={createRoom} disabled={busy || !wallet.publicKey} style={{ minHeight: 44, width: "100%", justifyContent: "center" }}>
+              {busy ? "…" : wallet.publicKey ? "Create Room »" : "Connect Wallet First"}
+            </BevelBtn>
+          </Panel>
         )}
 
         {/* Waiting */}
         {phase === "waiting" && room && (
-          <div style={S.card}>
-            <div style={S.cardTitle}>Share the Code</div>
-            <div style={S.bigCode}>{room.code}</div>
+          <Panel color={PAL.cream} title="SHARE THE CODE" titleBg={PAL.ink} titleFg={PAL.cyan}>
+            <div style={{ fontFamily: FONT.display, fontSize: "clamp(48px,12vw,72px)", letterSpacing: 10, textAlign: "center", color: PAL.ink, textShadow: `3px 3px 0 ${PAL.magenta}`, padding: "12px 0" }}>{room.code}</div>
             {joinUrl && (
-              <div style={{ display: "flex", justifyContent: "center", margin: "16px 0", background: "#fff", padding: 16, borderRadius: 12 }}>
+              <div style={{ display: "flex", justifyContent: "center", margin: "16px auto", ...bevelPanel(PAL.white), padding: 16, width: "fit-content" }}>
                 <QRCode value={joinUrl} size={180} />
               </div>
             )}
-            <div style={{ color: "#9ca3af", fontSize: 12, textAlign: "center", marginBottom: 16, wordBreak: "break-all" }}>
+            <div style={{ fontFamily: FONT.mono, fontSize: 13, textAlign: "center", marginBottom: 16, wordBreak: "break-all", color: PAL.purpleDp }}>
               {joinUrl}
             </div>
-            <div style={S.label}>Players joined: {room.players.length} / 2</div>
+            <div style={{ fontFamily: FONT.display, fontSize: 13, letterSpacing: 1.5, textTransform: "uppercase", color: PAL.purpleDp, marginBottom: 8 }}>Players joined: {room.players.length} / 2</div>
             {room.players.map((p) => (
-              <div key={p.wallet} style={S.playerRow}>
-                <span style={{ color: "#4ade80" }}>✓</span> {p.name} — {p.wallet.slice(0, 10)}…
+              <div key={p.wallet} style={{ fontFamily: FONT.mono, fontSize: 14, color: PAL.ink, padding: "6px 0", borderBottom: `2px solid ${PAL.paper}` }}>
+                <span style={{ color: PAL.slimeDk }}>✓</span> {p.name} — {p.wallet.slice(0, 10)}…
               </div>
             ))}
             {room.players.length === 2 && (
-              <Btn onClick={startGame} busy={busy} color="#8b5cf6" style={{ marginTop: 16 }}>
-                Start Dance Battle & Lock Wagers
-              </Btn>
+              <BevelBtn color={PAL.magenta} fg={PAL.white} onClick={startGame} disabled={busy} style={{ minHeight: 44, width: "100%", justifyContent: "center", marginTop: 16 }}>
+                {busy ? "…" : "Start Dance Battle & Lock Wagers »"}
+              </BevelBtn>
             )}
-          </div>
+          </Panel>
         )}
 
         {/* Gaming */}
         {phase === "gaming" && room && (
-          <div>
-            {/* Webcam + pose overlay */}
-            <div style={{ position: "relative", width: VIDEO_W, maxWidth: "100%", margin: "0 auto 12px" }}>
+          <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+
+            {/* Webcam + pose overlay — chunky ink frame + hard offset shadow */}
+            <div style={{ width: VIDEO_W, maxWidth: "100%", margin: "0 auto", ...bevelPanel(PAL.ink, { bw: 4, shadow: 6 }), position: "relative", overflow: "hidden" }}>
               <video
                 ref={pose.videoRef}
                 width={VIDEO_W}
                 height={VIDEO_H}
                 muted
                 playsInline
-                style={{ width: "100%", borderRadius: 12, background: "#111", display: "block", transform: "scaleX(-1)" }}
+                style={{ width: "100%", background: PAL.ink, display: "block", transform: "scaleX(-1)" }}
               />
               <PoseOverlay
                 width={VIDEO_W}
@@ -325,112 +358,93 @@ export default function DanceStation() {
               {!dancingActive && (
                 <div style={{
                   position: "absolute", inset: 0, display: "flex", alignItems: "center",
-                  justifyContent: "center", color: "#fff", fontSize: 20, fontWeight: 700,
-                  background: "rgba(0,0,0,0.5)", borderRadius: 12,
+                  justifyContent: "center", color: PAL.cyan, fontFamily: FONT.mono, fontSize: 18,
+                  letterSpacing: 1.5, textTransform: "uppercase", textAlign: "center", padding: 16,
+                  background: "rgba(11,11,11,0.78)",
                 }}>
-                  {currentTurn ? `${currentTurn.player} — press Start to dance!` : "Waiting for turn…"}
+                  {currentTurn ? `${currentTurn.player} · press Start to dance` : "Waiting for turn…"}
                 </div>
               )}
             </div>
 
-            <div style={S.card}>
+            {/* Live score — magenta bevel panel */}
+            <div style={{ width: VIDEO_W, maxWidth: "100%", margin: "0 auto", ...bevelPanel(PAL.magenta), padding: "12px 14px", textAlign: "center", color: PAL.white }}>
+              <div style={{ fontFamily: FONT.display, fontSize: 13, letterSpacing: 2, textTransform: "uppercase" }}>Live Score</div>
+              <div style={{ fontFamily: FONT.display, fontSize: "clamp(48px,12vw,64px)", lineHeight: 0.9, textShadow: `3px 3px 0 ${PAL.ink}` }}>{liveScore}</div>
+              <div style={{ fontFamily: FONT.mono, fontSize: 16 }}>match quality</div>
+            </div>
+
+            {/* Turn controls + scoreboard */}
+            <Panel color={PAL.cream} title={currentTurn ? `${currentTurn.player.toUpperCase()} IS DANCING` : "WAITING FOR NEXT TURN"} titleBg={PAL.ink} titleFg={PAL.cyan}>
               {currentTurn && (
                 <>
-                  <div style={S.cardTitle}>{currentTurn.player} is dancing</div>
-                  <div style={{ color: "#9ca3af", fontSize: 12, marginBottom: 12 }}>
+                  <div style={{ fontFamily: FONT.mono, fontSize: 14, marginBottom: 12, color: PAL.purpleDp }}>
                     {pose.ready ? `MediaPipe ready · ${pose.fps} fps` : "Loading pose model…"}
                     {choreo.loading && " · Loading choreography…"}
-                    {choreo.error && <span style={{ color: "#f87171" }}> · No reference choreography (will score 0)</span>}
+                    {choreo.error && <span style={{ color: PAL.red }}> · No reference choreography (will score 0)</span>}
                   </div>
-                  <div style={{ display: "flex", gap: 8 }}>
-                    <Btn onClick={startDancing} busy={busy || dancingActive} color="#4ade80">
-                      {dancingActive ? "Dancing…" : "Start Dancing"}
-                    </Btn>
-                    <Btn onClick={submitDanceScore} busy={busy || !dancingActive} color="#f59e0b">
-                      Stop & Score
-                    </Btn>
+                  <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+                    <BevelBtn color={PAL.cyan} fg={PAL.ink} onClick={startDancing} disabled={busy || dancingActive} style={{ minHeight: 44, flex: "1 1 160px", justifyContent: "center" }}>
+                      {dancingActive ? "Dancing…" : "▶ Start Dancing »"}
+                    </BevelBtn>
+                    <BevelBtn color={PAL.magenta} fg={PAL.white} onClick={submitDanceScore} disabled={busy || !dancingActive} style={{ minHeight: 44, flex: "1 1 160px", justifyContent: "center" }}>
+                      ■ Stop & Score »
+                    </BevelBtn>
                   </div>
                 </>
               )}
-              {!currentTurn && (
-                <div style={S.cardTitle}>Waiting for next turn…</div>
-              )}
               <div style={{ marginTop: 16 }}>
                 {room.players.map((p) => (
-                  <div key={p.wallet} style={S.playerRow}>
-                    {p.name}: {p.score !== null ? `${p.score}/100` : "—"}
+                  <div key={p.wallet} style={{ fontFamily: FONT.mono, fontSize: 15, color: PAL.ink, padding: "6px 0", borderBottom: `2px solid ${PAL.paper}`, display: "flex", justifyContent: "space-between" }}>
+                    <span>{p.name}</span>
+                    <span style={{ color: PAL.purpleDp, fontWeight: 700 }}>{p.score !== null ? `${p.score}/100` : "—"}</span>
                   </div>
                 ))}
               </div>
-            </div>
+            </Panel>
           </div>
         )}
 
         {/* Finished */}
         {phase === "finished" && room && (
-          <div style={S.card}>
-            <div style={S.cardTitle}>Dance Battle Over</div>
-            {room.players.map((p) => (
-              <div
-                key={p.wallet}
-                style={{ ...S.playerRow, color: p.wallet === room.winner ? "#4ade80" : "#fff", fontWeight: p.wallet === room.winner ? 700 : 400 }}
-              >
-                {p.wallet === room.winner ? "🏆 " : ""}{p.name}: {p.score}/100
-              </div>
-            ))}
+          <Panel color={PAL.cream} title="DANCE BATTLE OVER" titleBg={PAL.ink} titleFg={PAL.yellow}>
+            {room.players.map((p) => {
+              const won = p.wallet === room.winner;
+              return (
+                <div
+                  key={p.wallet}
+                  style={{ fontFamily: FONT.display, fontSize: won ? 24 : 19, letterSpacing: 0.5, textTransform: "uppercase", color: won ? PAL.ink : PAL.purpleDp, background: won ? PAL.slime : "transparent", border: won ? `3px solid ${PAL.ink}` : "3px solid transparent", padding: "8px 12px", marginBottom: 8, display: "flex", justifyContent: "space-between", gap: 12 }}
+                >
+                  <span>{won ? "🏆 " : ""}{p.name}</span>
+                  <span style={{ fontFamily: FONT.mono, fontSize: 20 }}>{p.score}/100</span>
+                </div>
+              );
+            })}
             {room.winner && (
-              <Btn onClick={settle} busy={busy} color="#8b5cf6" style={{ marginTop: 16 }}>
-                Pay Winner on Solana
-              </Btn>
+              <BevelBtn color={PAL.slime} fg={PAL.ink} onClick={settle} disabled={busy} style={{ minHeight: 44, width: "100%", justifyContent: "center", marginTop: 16 }}>
+                {busy ? "…" : "Pay Winner on Solana »"}
+              </BevelBtn>
             )}
-          </div>
+          </Panel>
         )}
 
         {/* Log */}
-        <div style={{ ...S.card, background: "#0f0f0f", marginTop: 8 }}>
-          <div style={S.label}>Log</div>
-          <div style={{ marginTop: 6, maxHeight: 150, overflowY: "auto" }}>
-            {log.length === 0 && <div style={{ color: "#555", fontSize: 12 }}>Events will appear here</div>}
-            {log.map((l, i) => <div key={i} style={{ fontSize: 12, color: "#9ca3af", marginBottom: 2 }}>{l}</div>)}
+        <Panel color={PAL.white} title="LOG" titleBg={PAL.ink} titleFg={PAL.slime} shadow={4}>
+          <div style={{ maxHeight: 150, overflowY: "auto" }}>
+            {log.length === 0 && <div style={{ fontFamily: FONT.mono, fontSize: 13, color: PAL.purpleDp }}>Events will appear here</div>}
+            {log.map((l, i) => <div key={i} style={{ fontFamily: FONT.mono, fontSize: 13, color: PAL.ink, marginBottom: 2 }}>{l}</div>)}
           </div>
-        </div>
+        </Panel>
       </div>
+
+      {/* Move cue — the signature lower-third */}
+      <LowerThird
+        kicker="♪ LIVE"
+        kickerColor={PAL.red}
+        kickerFg={PAL.white}
+        bodyColor={PAL.cyan}
+        headline={cueHeadline}
+      />
     </div>
-  );
-}
-
-// ─── Styles ───────────────────────────────────────────────────────────────────
-const S: Record<string, React.CSSProperties> = {
-  root: { minHeight: "100vh", background: "#0a0a0a", color: "#fff", fontFamily: "system-ui, sans-serif", padding: 24 },
-  inner: { maxWidth: 680, margin: "0 auto" },
-  header: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 32 },
-  title: { margin: 0, fontSize: 22, fontWeight: 700 },
-  card: { background: "#111", border: "1px solid #222", borderRadius: 12, padding: 20, marginBottom: 12 },
-  cardTitle: { fontSize: 16, fontWeight: 600, marginBottom: 8, color: "#e5e7eb" },
-  label: { color: "#6b7280", fontSize: 11, textTransform: "uppercase" as const, letterSpacing: 1 },
-  bigCode: { fontSize: 64, fontWeight: 900, letterSpacing: 12, textAlign: "center" as const, color: "#facc15", padding: "20px 0" },
-  input: { display: "block", width: "100%", background: "#1a1a1a", border: "1px solid #333", borderRadius: 6, padding: "8px 12px", color: "#fff", fontSize: 16, marginTop: 4, marginBottom: 16 },
-  playerRow: { padding: "6px 0", borderBottom: "1px solid #1a1a1a", fontSize: 14, fontFamily: "monospace" },
-};
-
-function Btn({ onClick, busy, disabled, children, color, style }: {
-  onClick: () => void; busy: boolean; disabled?: boolean;
-  children: React.ReactNode; color?: string; style?: React.CSSProperties;
-}) {
-  return (
-    <button
-      onClick={onClick}
-      disabled={busy || disabled}
-      style={{
-        background: busy || disabled ? "#222" : (color ?? "#3b82f6"),
-        color: busy || disabled ? "#555" : "#fff",
-        border: "none", borderRadius: 8, padding: "10px 20px",
-        cursor: busy || disabled ? "not-allowed" : "pointer",
-        fontSize: 14, fontWeight: 600, width: "100%",
-        ...style,
-      }}
-    >
-      {busy ? "…" : children}
-    </button>
   );
 }

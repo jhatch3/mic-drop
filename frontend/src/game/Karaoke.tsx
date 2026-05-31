@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from "react";
+import { PAL, FONT, bevelPanel, BevelBtn, OnAirBar, LowerThird } from "@/ui";
 
 interface LyricLine { t: number; end: number; text: string; }
 interface ContourFrame { t: number; midi: number | null; voiced: boolean; }
@@ -136,7 +137,7 @@ function drawGraph(
   if (!ctx) return;
   const W = canvas.width, H = canvas.height;
   ctx.clearRect(0, 0, W, H);
-  ctx.fillStyle = "#07070f";
+  ctx.fillStyle = "#0B0B0B";
   ctx.fillRect(0, 0, W, H);
 
   const MIDI_MIN = 48, MIDI_MAX = 84;
@@ -144,22 +145,21 @@ function drawGraph(
   const toX = (t: number) => ((t - (now - win)) / win) * W;
 
   // Subtle grid
-  ctx.strokeStyle = "#ffffff06";
+  ctx.strokeStyle = "rgba(255,255,255,0.10)";
   ctx.lineWidth = 1;
   for (let m = MIDI_MIN; m <= MIDI_MAX; m += 3) {
     const y = toY(m);
     ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(W, y); ctx.stroke();
     if (NOTE_NAMES[m % 12] && !NOTE_NAMES[m % 12].includes("#")) {
-      ctx.fillStyle = "#ffffff15";
+      ctx.fillStyle = "rgba(255,255,255,0.18)";
       ctx.font = "9px monospace";
       ctx.fillText(NOTE_NAMES[m % 12] + Math.floor(m / 12 - 1), 4, y - 3);
     }
   }
 
-  // Target — purple glow
+  // Target — magenta
   ctx.save();
-  ctx.shadowColor = "#a78bfa"; ctx.shadowBlur = 12;
-  ctx.strokeStyle = "#a78bfa"; ctx.lineWidth = 3;
+  ctx.strokeStyle = "#FF1C8E"; ctx.lineWidth = 7;
   ctx.lineJoin = "round"; ctx.lineCap = "round";
   ctx.beginPath();
   let on = false;
@@ -170,32 +170,32 @@ function drawGraph(
   }
   ctx.stroke(); ctx.restore();
 
-  // Singer — yellow glow
+  // Singer — yellow
   ctx.save();
-  ctx.shadowColor = "#facc15"; ctx.shadowBlur = 14;
-  ctx.strokeStyle = "#facc15"; ctx.lineWidth = 2.5;
+  ctx.strokeStyle = "#FFD400"; ctx.lineWidth = 5;
   ctx.lineJoin = "round"; ctx.lineCap = "round";
   ctx.beginPath(); on = false;
+  let lastSinger: { x: number; y: number } | null = null;
   for (const p of points) {
     if (!p.singer) { on = false; continue; }
     const x = toX(p.t), y = toY(p.singer);
     on ? ctx.lineTo(x, y) : ctx.moveTo(x, y); on = true;
+    lastSinger = { x, y };
   }
   ctx.stroke(); ctx.restore();
 
-  // Legend pills
-  const pill = (label: string, color: string, x: number) => {
-    ctx.font = "bold 10px system-ui";
-    const w = ctx.measureText(label).width + 16;
-    ctx.fillStyle = color + "22";
+  // Current-point dot — slime with ink stroke
+  if (lastSinger) {
+    ctx.save();
     ctx.beginPath();
-    ctx.roundRect(x, H - 22, w, 16, 4);
+    ctx.arc(lastSinger.x, lastSinger.y, 9, 0, Math.PI * 2);
+    ctx.fillStyle = "#B6FF00";
     ctx.fill();
-    ctx.fillStyle = color;
-    ctx.fillText(label, x + 8, H - 11);
-  };
-  pill("● Target", "#a78bfa", 8);
-  pill("● You",    "#facc15", 90);
+    ctx.lineWidth = 3;
+    ctx.strokeStyle = "#0B0B0B";
+    ctx.stroke();
+    ctx.restore();
+  }
 }
 
 // ─── Main component ───────────────────────────────────────────────────────────
@@ -356,7 +356,6 @@ export default function Karaoke({ song = DEFAULT_SONG, playerLabel, onFinish, au
   }, [onFinish]);
 
   const progress = duration > 0 ? (currentTime / duration) * 100 : 0;
-  const scoreColor = score >= 80 ? "#4ade80" : score >= 50 ? "#facc15" : "#f87171";
   const fmt = (s: number) => `${Math.floor(s / 60)}:${Math.floor(s % 60).toString().padStart(2, "0")}`;
 
   // Show active + 2 before + 3 after for context
@@ -364,8 +363,27 @@ export default function Karaoke({ song = DEFAULT_SONG, playerLabel, onFinish, au
     i >= Math.max(0, activeIdx - 2) && i <= activeIdx + 3
   );
 
+  // Active lyric line for the lower-third caption, with the currently-sung word
+  // highlighted (broadcast karaoke caption look).
+  const activeLine = activeIdx >= 0 ? lines[activeIdx] : null;
+  const captionHeadline = activeLine ? (() => {
+    const words = wordsForLine(activeLine);
+    const activeWord = words.findIndex(w => currentTime >= w.start && currentTime < w.end);
+    return (
+      <span style={{ display: "flex", flexWrap: "wrap", gap: "0 6px", alignItems: "center" }}>
+        {words.map((w, i) =>
+          i === activeWord ? (
+            <span key={i} style={{ background: PAL.yellow, border: `2px solid ${PAL.ink}`, padding: "0 6px" }}>{w.word}</span>
+          ) : (
+            <span key={i}>{w.word}</span>
+          )
+        )}
+      </span>
+    );
+  })() : (lines.length === 0 ? "Loading lyrics…" : "…");
+
   return (
-    <div style={{ minHeight: "100vh", background: "#07070f", color: "#fff", fontFamily: "'Inter', system-ui, sans-serif", display: "flex", flexDirection: "column" }}>
+    <div style={{ minHeight: "100vh", background: PAL.purpleDp, color: PAL.white, fontFamily: FONT.body, display: "flex", flexDirection: "column" }}>
       <audio
         ref={audioRef}
         src={song.audio}
@@ -373,57 +391,43 @@ export default function Karaoke({ song = DEFAULT_SONG, playerLabel, onFinish, au
         onEnded={() => { setPlaying(false); finishTurn(); }}
       />
 
-      {/* Top bar */}
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "16px 24px", borderBottom: "1px solid #0f0f1a" }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-          <div style={{ width: 36, height: 36, borderRadius: 8, background: "linear-gradient(135deg,#7c3aed,#4f46e5)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 18 }}>🎤</div>
-          <div>
-            <div style={{ fontWeight: 700, fontSize: 15 }}>{song.title}</div>
-            <div style={{ color: "#4b5563", fontSize: 12 }}>{song.artist}</div>
-          </div>
-          {playerLabel && (
-            <div style={{ marginLeft: 8, fontSize: 12, fontWeight: 700, color: "#a78bfa", background: "#a78bfa1a", border: "1px solid #a78bfa40", borderRadius: 20, padding: "4px 12px" }}>
-              {playerLabel}
-            </div>
-          )}
-        </div>
-
-        {/* Score badge */}
-        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-          {micOn && <div style={{ fontSize: 11, color: "#f87171", background: "#f8717115", border: "1px solid #f8717130", borderRadius: 20, padding: "3px 10px" }}>● REC</div>}
-          {/* Autonomous mode (AI host): no manual controls — the song plays and the turn
-              auto-finishes when it ends. Manual controls only show outside the game. */}
-          {!autoPlay && (
-            <>
-              <button onClick={restart} style={{ background: "transparent", border: "1px solid #1f2937", borderRadius: 10, color: "#6b7280", padding: "8px 14px", cursor: "pointer", fontSize: 18 }}>↺</button>
-              <button onClick={togglePlay} style={{ background: playing ? "#1f2937" : "linear-gradient(135deg,#7c3aed,#6d28d9)", border: "none", borderRadius: 10, color: "#fff", padding: "10px 22px", cursor: "pointer", fontWeight: 700, fontSize: 14 }}>
-                {playing ? "⏸ Pause" : "▶ Sing"}
-              </button>
-              {onFinish && (
-                <button onClick={finishTurn} style={{ background: "linear-gradient(135deg,#16a34a,#15803d)", border: "none", borderRadius: 10, color: "#fff", padding: "10px 18px", cursor: "pointer", fontWeight: 700, fontSize: 14 }}>
-                  Finish turn →
-                </button>
-              )}
-            </>
-          )}
-        </div>
-      </div>
+      {/* ON-AIR top bar — broadcast style */}
+      <OnAirBar
+        tag={micOn ? "ON AIR" : "STANDBY"}
+        tagColor={micOn ? PAL.red : PAL.cyan}
+        blink={false}
+        left={
+          <span style={{ display: "inline-flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+            <span style={{ fontFamily: FONT.display, fontSize: 16, color: PAL.white, letterSpacing: 0.5, textTransform: "uppercase" }}>
+              {song.title}
+            </span>
+            <span style={{ fontFamily: FONT.mono, fontSize: 15, color: PAL.cyan }}>{song.artist}</span>
+            {playerLabel && (
+              <span style={{ fontFamily: FONT.display, fontSize: 13, color: PAL.ink, background: PAL.slime, border: `2px solid ${PAL.ink}`, padding: "2px 10px", letterSpacing: 1, textTransform: "uppercase" }}>
+                {playerLabel}
+              </span>
+            )}
+          </span>
+        }
+        right={
+          <span style={{ display: "inline-flex", alignItems: "center", gap: 10 }}>
+            {micOn && <span style={{ color: PAL.red, fontFamily: FONT.display }}>● REC</span>}
+            <span>{fmt(currentTime)} / {fmt(duration)}</span>
+          </span>
+        }
+      />
 
       {/* Progress bar */}
-      <div style={{ height: 2, background: "#0f0f1a" }}>
-        <div style={{ height: "100%", width: `${progress}%`, background: "linear-gradient(to right, #7c3aed, #a78bfa)", transition: "width 0.1s linear" }} />
-      </div>
-      <div style={{ display: "flex", justifyContent: "space-between", padding: "4px 24px", fontSize: 10, color: "#374151", fontFamily: "monospace" }}>
-        <span>{fmt(currentTime)}</span>
-        <span>{fmt(duration)}</span>
+      <div style={{ height: 6, background: PAL.ink, borderBottom: `2px solid ${PAL.ink}` }}>
+        <div style={{ height: "100%", width: `${progress}%`, background: PAL.slime, transition: "width 0.1s linear" }} />
       </div>
 
       {/* Main content: lyrics left, graph + stats right */}
-      <div style={{ flex: 1, display: "grid", gridTemplateColumns: "1fr 380px", gap: 0 }}>
+      <div style={{ flex: 1, display: "grid", gridTemplateColumns: "1fr minmax(300px, 400px)", gap: 0 }}>
 
         {/* Lyrics panel */}
-        <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", padding: "40px 48px", gap: 20, borderRight: "1px solid #0f0f1a", minHeight: 400 }}>
-          {lines.length === 0 && <div style={{ color: "#1f2937" }}>Loading…</div>}
+        <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", padding: "40px 48px", gap: 20, borderRight: `4px solid ${PAL.ink}`, minHeight: 400, background: `radial-gradient(circle at 50% 24%, ${PAL.purple} 0%, ${PAL.purpleDp} 72%)` }}>
+          {lines.length === 0 && <div style={{ fontFamily: FONT.mono, fontSize: 18, color: PAL.cyan, letterSpacing: 1 }}>Loading lyrics…</div>}
           {visibleLines.map((line) => {
             const i = lines.indexOf(line);
             const isActive = i === activeIdx;
@@ -435,26 +439,32 @@ export default function Karaoke({ song = DEFAULT_SONG, playerLabel, onFinish, au
                 ref={isActive ? activeLyricRef : undefined}
                 style={{
                   textAlign: "center",
-                  fontSize:   isActive ? 36 : 19,
-                  fontWeight: isActive ? 800 : 400,
-                  opacity:    isActive ? 1 : isPast ? 0.2 : 0.45,
+                  fontFamily: FONT.display,
+                  fontSize:   isActive ? 40 : 21,
+                  letterSpacing: 0.5,
+                  textTransform: "uppercase",
+                  color: isActive ? PAL.white : PAL.cream,
+                  textShadow: isActive ? `3px 3px 0 ${PAL.ink}` : "none",
+                  opacity:    isActive ? 1 : isPast ? 0.25 : 0.5,
                   transform:  isActive ? "scale(1.02)" : "scale(1)",
                   transition: "all 0.2s ease",
                   maxWidth: 540,
-                  lineHeight: 1.25,
+                  lineHeight: 1.2,
                 }}
               >
                 {isActive && words ? (
-                  <span style={{ display: "flex", flexWrap: "wrap", justifyContent: "center", gap: "0 10px" }}>
+                  <span style={{ display: "flex", flexWrap: "wrap", justifyContent: "center", gap: "4px 10px" }}>
                     {words.map((w, wi) => {
-                      const pct = currentTime <= w.start ? 0 : currentTime >= w.end ? 100
-                        : Math.round(((currentTime - w.start) / (w.end - w.start)) * 100);
+                      const sung = currentTime >= w.start;
+                      const cur  = currentTime >= w.start && currentTime < w.end;
                       return (
-                        <span key={wi} style={{ position: "relative", display: "inline-block", color: "#374151" }}>
+                        <span key={wi} style={{
+                          color: cur ? PAL.ink : sung ? PAL.yellow : PAL.cream,
+                          background: cur ? PAL.yellow : "transparent",
+                          border: cur ? `2px solid ${PAL.ink}` : "2px solid transparent",
+                          padding: "0 6px",
+                        }}>
                           {w.word}
-                          <span style={{ position: "absolute", left: 0, top: 0, color: "#facc15", overflow: "hidden", width: `${pct}%`, whiteSpace: "nowrap", textShadow: "0 0 16px #facc1580" }}>
-                            {w.word}
-                          </span>
                         </span>
                       );
                     })}
@@ -468,79 +478,104 @@ export default function Karaoke({ song = DEFAULT_SONG, playerLabel, onFinish, au
         </div>
 
         {/* Right panel: graph + note stats */}
-        <div style={{ display: "flex", flexDirection: "column", gap: 0, padding: "20px 20px", background: "#060610" }}>
+        <div style={{ display: "flex", flexDirection: "column", gap: 12, padding: "20px", background: PAL.purpleDp }}>
 
-          {/* Pitch graph */}
-          <div style={{ borderRadius: 12, overflow: "hidden", border: "1px solid #0f0f1a", position: "relative" }}>
+          {/* Pitch graph — ink frame + offset shadow + Anton legend chips */}
+          <div style={{ ...bevelPanel(PAL.ink, { bw: 4, shadow: 6 }), position: "relative", overflow: "hidden" }}>
             <canvas ref={canvasRef} width={680} height={200} style={{ width: "100%", height: 200, display: "block" }} />
+            <div style={{ position: "absolute", top: 8, left: 10, display: "flex", gap: 8 }}>
+              {([["● TARGET", PAL.magenta], ["● YOU", PAL.yellow]] as const).map(([label, c]) => (
+                <span key={label} style={{ fontFamily: FONT.display, fontSize: 13, color: PAL.ink, background: c, padding: "2px 8px", border: `2px solid ${PAL.ink}`, letterSpacing: 0.5 }}>
+                  {label}
+                </span>
+              ))}
+            </div>
             {!playing && (
-              <div style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", background: "#07070fee", color: "#1f2937", fontSize: 12, letterSpacing: 2, textTransform: "uppercase" }}>
-                Pitch Graph
+              <div style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", background: "rgba(11,11,11,0.86)", color: PAL.cyan, fontFamily: FONT.mono, fontSize: 18, letterSpacing: 2, textTransform: "uppercase" }}>
+                Pitch Meter
               </div>
             )}
           </div>
 
-          {/* Live score — big */}
-          <div style={{ background: "#0a0a18", border: "1px solid #0f0f1a", borderRadius: 12, padding: "16px", marginTop: 12, textAlign: "center" }}>
-            <div style={{ fontSize: 10, color: "#374151", letterSpacing: 3, textTransform: "uppercase", marginBottom: 4 }}>Live Score</div>
-            <div style={{ fontSize: 72, fontWeight: 900, color: scoreColor, lineHeight: 1, transition: "color 0.3s" }}>{score}</div>
-            <div style={{ fontSize: 12, color: "#374151", marginTop: 4 }}>{hits} / {scored} frames hit</div>
-            {/* Accuracy bar */}
-            <div style={{ height: 5, background: "#111", borderRadius: 3, overflow: "hidden", marginTop: 10 }}>
-              <div style={{ height: "100%", width: `${score}%`, background: `linear-gradient(to right, #7c3aed, ${scoreColor})`, borderRadius: 3, transition: "width 0.2s ease" }} />
-            </div>
+          {/* Live score — slime bevel panel */}
+          <div style={{ ...bevelPanel(PAL.slime), padding: "12px 14px", textAlign: "center", color: PAL.ink }}>
+            <div style={{ fontFamily: FONT.display, fontSize: 13, letterSpacing: 2, textTransform: "uppercase" }}>Live Score</div>
+            <div style={{ fontFamily: FONT.display, fontSize: 64, lineHeight: 0.9, textShadow: `3px 3px 0 ${PAL.white}` }}>{score}</div>
+            <div style={{ fontFamily: FONT.mono, fontSize: 16 }}>{hits} / {scored} hit</div>
           </div>
 
-          {/* Note + tuner */}
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginTop: 10 }}>
-            <div style={{ background: "#0a0a18", border: "1px solid #0f0f1a", borderRadius: 10, padding: "12px 14px" }}>
-              <div style={{ fontSize: 10, color: "#374151", letterSpacing: 2, textTransform: "uppercase", marginBottom: 6 }}>You</div>
-              <div style={{ fontSize: 26, fontWeight: 800, color: liveMidi ? "#facc15" : "#1f2937", fontFamily: "monospace", lineHeight: 1 }}>
+          {/* Note chips: YOU / TGT */}
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+            <div style={{ ...bevelPanel(PAL.white, { shadow: 0 }), padding: "8px", textAlign: "center", color: PAL.ink }}>
+              <div style={{ fontFamily: FONT.display, fontSize: 12, letterSpacing: 1, color: PAL.purpleDp, textTransform: "uppercase" }}>You</div>
+              <div style={{ fontFamily: FONT.mono, fontSize: 28, color: liveMidi ? PAL.yellow : PAL.purpleDp, WebkitTextStroke: `1px ${PAL.ink}`, lineHeight: 1 }}>
                 {liveMidi ? noteFromMidi(liveMidi) : "—"}
               </div>
-              <div style={{ fontSize: 11, color: "#374151", marginTop: 4 }}>{liveMidi ? `${liveMidi.toFixed(1)} midi` : "silent"}</div>
+              <div style={{ fontFamily: FONT.mono, fontSize: 13, color: PAL.purpleDp }}>{liveMidi ? `${liveMidi.toFixed(1)} midi` : "silent"}</div>
             </div>
-            <div style={{ background: "#0a0a18", border: "1px solid #0f0f1a", borderRadius: 10, padding: "12px 14px" }}>
-              <div style={{ fontSize: 10, color: "#374151", letterSpacing: 2, textTransform: "uppercase", marginBottom: 6 }}>Target</div>
-              <div style={{ fontSize: 26, fontWeight: 800, color: targetMidi ? "#a78bfa" : "#1f2937", fontFamily: "monospace", lineHeight: 1 }}>
+            <div style={{ ...bevelPanel(PAL.white, { shadow: 0 }), padding: "8px", textAlign: "center", color: PAL.ink }}>
+              <div style={{ fontFamily: FONT.display, fontSize: 12, letterSpacing: 1, color: PAL.purpleDp, textTransform: "uppercase" }}>Tgt</div>
+              <div style={{ fontFamily: FONT.mono, fontSize: 28, color: targetMidi ? PAL.magenta : PAL.purpleDp, WebkitTextStroke: `1px ${PAL.ink}`, lineHeight: 1 }}>
                 {targetMidi ? noteFromMidi(targetMidi) : "—"}
               </div>
-              <div style={{ fontSize: 11, color: "#374151", marginTop: 4 }}>{targetMidi ? `${targetMidi.toFixed(1)} midi` : "rest"}</div>
+              <div style={{ fontFamily: FONT.mono, fontSize: 13, color: PAL.purpleDp }}>{targetMidi ? `${targetMidi.toFixed(1)} midi` : "rest"}</div>
             </div>
           </div>
 
           {/* Tuner — cents off indicator */}
-          <div style={{ background: "#0a0a18", border: "1px solid #0f0f1a", borderRadius: 10, padding: "12px 16px", marginTop: 10 }}>
-            <div style={{ fontSize: 10, color: "#374151", letterSpacing: 2, textTransform: "uppercase", marginBottom: 8 }}>Pitch Accuracy</div>
-            <div style={{ position: "relative", height: 8, background: "#111", borderRadius: 4, overflow: "visible" }}>
-              {/* Zone markers */}
-              <div style={{ position: "absolute", left: "50%", top: -3, width: 2, height: 14, background: "#1f2937", transform: "translateX(-50%)" }} />
-              {/* Green hit zone */}
-              <div style={{ position: "absolute", left: `${50 - (HIT_CENTS / 200) * 100}%`, width: `${(HIT_CENTS / 100) * 100}%`, height: "100%", background: "#4ade8022", borderRadius: 4 }} />
+          <div style={{ ...bevelPanel(PAL.white, { shadow: 0 }), padding: "12px 16px", color: PAL.ink }}>
+            <div style={{ fontFamily: FONT.display, fontSize: 12, letterSpacing: 2, textTransform: "uppercase", marginBottom: 8, color: PAL.purpleDp }}>Pitch Accuracy</div>
+            <div style={{ position: "relative", height: 10, background: PAL.ink, border: `2px solid ${PAL.ink}`, overflow: "visible" }}>
+              {/* Center marker */}
+              <div style={{ position: "absolute", left: "50%", top: -4, width: 2, height: 18, background: PAL.purpleDp, transform: "translateX(-50%)" }} />
+              {/* Hit zone */}
+              <div style={{ position: "absolute", left: `${50 - (HIT_CENTS / 200) * 100}%`, width: `${(HIT_CENTS / 100) * 100}%`, height: "100%", background: `${PAL.slime}55` }} />
               {/* Cursor */}
               {centsOff !== null && (
                 <div style={{
                   position: "absolute",
                   left: `${Math.min(98, Math.max(2, 50 + (centsOff / 200) * 100))}%`,
                   top: "50%", transform: "translate(-50%, -50%)",
-                  width: 12, height: 12, borderRadius: "50%",
-                  background: Math.abs(centsOff) <= HIT_CENTS ? "#4ade80" : "#f87171",
-                  boxShadow: `0 0 8px ${Math.abs(centsOff) <= HIT_CENTS ? "#4ade80" : "#f87171"}`,
+                  width: 14, height: 14,
+                  background: Math.abs(centsOff) <= HIT_CENTS ? PAL.slime : PAL.red,
+                  border: `2px solid ${PAL.ink}`,
                   transition: "left 0.05s, background 0.1s",
                 }} />
               )}
             </div>
-            <div style={{ display: "flex", justifyContent: "space-between", marginTop: 6, fontSize: 10, color: "#1f2937" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", marginTop: 6, fontFamily: FONT.mono, fontSize: 14, color: PAL.purpleDp }}>
               <span>♭ flat</span>
-              <span style={{ color: centsOff !== null ? (Math.abs(centsOff) <= HIT_CENTS ? "#4ade80" : "#f87171") : "#1f2937", fontWeight: 600 }}>
+              <span style={{ color: centsOff !== null ? (Math.abs(centsOff) <= HIT_CENTS ? PAL.slimeDk : PAL.red) : PAL.purpleDp, fontWeight: 700 }}>
                 {centsOff !== null ? `${centsOff > 0 ? "+" : ""}${Math.round(centsOff)}¢` : "—"}
               </span>
               <span>sharp ♯</span>
             </div>
           </div>
 
+          {/* Manual controls (only outside autonomous AI-host mode) */}
+          {!autoPlay && (
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+              <BevelBtn color={PAL.white} fg={PAL.ink} onClick={restart} style={{ minHeight: 44 }}>↺ Restart</BevelBtn>
+              <BevelBtn color={playing ? PAL.orange : PAL.slime} fg={PAL.ink} onClick={togglePlay} style={{ minHeight: 44, flex: 1 }}>
+                {playing ? "⏸ Pause" : "▶ Sing »"}
+              </BevelBtn>
+              {onFinish && (
+                <BevelBtn color={PAL.magenta} fg={PAL.white} onClick={finishTurn} style={{ minHeight: 44 }}>Finish »</BevelBtn>
+              )}
+            </div>
+          )}
+
         </div>
       </div>
+
+      {/* Lyric caption — the signature lower-third */}
+      <LowerThird
+        kicker="♪ LIVE"
+        kickerColor={PAL.red}
+        kickerFg={PAL.white}
+        headline={captionHeadline}
+        action={!autoPlay && onFinish ? <BevelBtn color={PAL.orange} fg={PAL.white} onClick={finishTurn} style={{ minHeight: 44 }}>END TURN »</BevelBtn> : undefined}
+      />
     </div>
   );
 }

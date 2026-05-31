@@ -1,4 +1,5 @@
 import "./index.css";
+import "./ui/fonts.css";
 import { StrictMode, useMemo } from "react";
 import { createRoot } from "react-dom/client";
 import { ConnectionProvider, WalletProvider } from "@solana/wallet-adapter-react";
@@ -13,6 +14,9 @@ import LocalGame from "./game/LocalGame";
 import KaraokeHost from "./game/KaraokeHost";
 import DanceHost from "./dance/DanceHost";
 import Home from "./pages/Home";
+import Landing from "./pages/Landing";
+import DanceLanding from "./pages/DanceLanding";
+import Leaderboard from "./pages/Leaderboard";
 import CreateLobby from "./pages/CreateLobby";
 
 // Resolve the RPC endpoint with a clear, RUNTIME-overridable precedence so a
@@ -56,10 +60,14 @@ function Router() {
   if (path === "/play") return <Player />;
   if (path === "/karaoke") return <Karaoke />;
   if (path === "/local") return <LocalGame />;
+  if (path === "/dance") return <DanceLanding />;
   if (path === "/dance-host") return <DanceHost />;
   if (path === "/create") return <CreateLobby />;
   if (path === "/test") return <App />;
-  return <Home />;
+  if (path === "/leaderboard") return <Leaderboard mode="karaoke" />;
+  if (path === "/dance-leaderboard") return <Leaderboard mode="dance" />;
+  if (path === "/home") return <Home />;   // old retro landing (kept for reference)
+  return <Landing />;
 }
 
 function Root() {

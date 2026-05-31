@@ -1,0 +1,27 @@
+/* MIC DROP "Broadcast" fonts + motion. Imported once from main entry. */
+@import url('https://fonts.googleapis.com/css2?family=Anton&family=Bungee&family=Archivo:wght@400;500;600;700;800;900&family=VT323&display=swap');
+
+/* Responsive guard: everything sizes to the viewport, never forces sideways scroll. */
+*, *::before, *::after { box-sizing: border-box; }
+html, body { max-width: 100%; overflow-x: hidden; }
+img, svg, canvas { max-width: 100%; }
+
+/* ── keyframes (from the design handoff) ── */
+@keyframes mdBlink   { 0%, 100% { opacity: 1; } 50% { opacity: 0.18; } }
+@keyframes mdMarquee { from { transform: translateX(0); } to { transform: translateX(-50%); } }
+@keyframes mdSpin    { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+@keyframes mdEq      { 0%, 100% { transform: scaleY(0.45); } 50% { transform: scaleY(1); } }
+
+/* Blinking intentionally disabled — static instead (no flashing anywhere). */
+.md-blink { animation: none; }
+.md-spin  { animation: mdSpin 14s linear infinite; }
+.md-eq    { transform-origin: bottom; animation: mdEq 0.7s ease-in-out infinite; }
+
+/* Beveled-button press feedback: lift on hover, press the bevel "in" on active. */
+.md-press { transition: transform 0.04s ease; }
+.md-press:hover  { transform: translate(-1px, -1px); }
+.md-press:active { transform: translate(3px, 3px); box-shadow: inset 3px 3px 0 rgba(255,255,255,0.5), inset -3px -3px 0 rgba(0,0,0,0.28) !important; }
+
+@media (prefers-reduced-motion: reduce) {
+  .md-blink, .md-spin, .md-eq { animation-duration: 0.001ms; animation-iteration-count: 1; }
+}

@@ -1,5 +1,10 @@
 import { useState, useCallback } from "react";
 import Karaoke, { DEFAULT_SONG, type SongDef, type KaraokeResult } from "./Karaoke";
+import {
+  PAL, FONT, bevelPanel,
+  OnAirBar, StageBG, LowerThird, ScoreBug, Nameplate,
+  BevelBtn, Panel, Splat,
+} from "@/ui";
 
 // ─── Local hot-seat 2-player mode — NO wallet, NO backend, NO socket ──────────
 // Two players take turns singing on the same laptop (the karaoke station, per the
@@ -50,25 +55,36 @@ export default function LocalGame() {
   if (phase === "p2")
     return <Karaoke key="p2" song={song} playerLabel={`${p2Name} — Round 2`} onFinish={onP2Finish} />;
 
-  return (
-    <div style={S.root}>
-      <div style={S.inner}>
-        <div style={S.brand}>
-          <div style={S.logo}>🎤</div>
-          <div>
-            <div style={{ fontWeight: 800, fontSize: 20 }}>Pitch Battle</div>
-            <div style={{ color: "#6b7280", fontSize: 12, letterSpacing: 1 }}>LOCAL · NO WALLET</div>
+  // ── Setup ──────────────────────────────────────────────────────────────────
+  if (phase === "setup")
+    return (
+      <Broadcast
+        tag="STANDBY" tagColor={PAL.cyan} blink={false}
+        right="MIC DROP TV · GREEN ROOM"
+        lower={
+          <LowerThird
+            kicker="UP NEXT" kickerColor={PAL.yellow} kickerFg={PAL.ink}
+            headline="Two singers, one laptop — lock the bill and put it on air."
+            action={
+              <BevelBtn color={PAL.slime} big blink
+                onClick={() => { setP1(null); setP2(null); setPhase("p1"); }}>
+                GO LIVE »
+              </BevelBtn>
+            }
+          />
+        }
+      >
+        <Stage>
+          <div style={S.kickerHead}>TONIGHT'S MATCHUP</div>
+
+          <div style={S.vsRow}>
+            <Nameplate kicker="CHAMPION" name={p1Name || "Player 1"} color={PAL.slime} sub="HOME MIC" />
+            <span style={S.vsTxt}>VS</span>
+            <Nameplate kicker="CHALLENGER" name={p2Name || "Player 2"} color={PAL.magenta} sub="THE SEAT" />
           </div>
-        </div>
 
-        {/* ── Setup ─────────────────────────────────────────────────────── */}
-        {phase === "setup" && (
-          <div style={S.card}>
-            <div style={S.cardTitle}>Two singers, one laptop</div>
-            <div style={{ color: "#9ca3af", fontSize: 13, marginBottom: 20 }}>
-              Take turns singing into the mic. Highest pitch accuracy wins — no SOL, no wallet, just bragging rights.
-            </div>
-
+          <Panel color={PAL.white} title="SET THE BILL" titleFg={PAL.slime}
+            shadow={7} style={{ width: "min(620px, 92%)", marginTop: 28 }}>
             <label style={S.label}>Player 1</label>
             <input style={S.input} value={p1Name} maxLength={20}
               onChange={(e) => setP1Name(e.target.value)} placeholder="Player 1" />
@@ -77,94 +93,155 @@ export default function LocalGame() {
             <input style={S.input} value={p2Name} maxLength={20}
               onChange={(e) => setP2Name(e.target.value)} placeholder="Player 2" />
 
-            <label style={S.label}>Song</label>
+            <label style={S.label}>Track</label>
             <select style={S.input} value={songIdx} onChange={(e) => setSongIdx(Number(e.target.value))}>
               {SONGS.map((s, i) => (
                 <option key={i} value={i}>{s.title} — {s.artist}</option>
               ))}
             </select>
 
-            <button style={S.primary} onClick={() => { setP1(null); setP2(null); setPhase("p1"); }}>
-              ▶ Start Battle — {p1Name || "Player 1"} sings first
-            </button>
-            <div style={{ color: "#374151", fontSize: 11, marginTop: 12, textAlign: "center" }}>
-              Your browser will ask for mic access on the first round.
+            <div style={S.note}>♪ Your browser will ask for mic access on the first round.</div>
+          </Panel>
+        </Stage>
+      </Broadcast>
+    );
+
+  // ── Handoff (P1 done) ────────────────────────────────────────────────────────
+  if (phase === "handoff" && p1)
+    return (
+      <Broadcast
+        tag="GREEN ROOM" tagColor={PAL.orange} blink={false}
+        right="MIC DROP TV · PASS THE MIC"
+        lower={
+          <LowerThird
+            kicker="UP NEXT" kickerColor={PAL.yellow} kickerFg={PAL.ink}
+            headline={<>Pass the laptop to <b>{p2Name}</b> — same track, fresh mic.</>}
+            action={
+              <BevelBtn color={PAL.orange} big blink onClick={() => setPhase("p2")}>
+                {p2Name}'S TURN »
+              </BevelBtn>
+            }
+          />
+        }
+      >
+        <Stage>
+          <div style={S.kickerHead}>ROUND 1 — IN THE BOOKS</div>
+          <div style={S.handoffHead}>PLAYER 2 — YOU'RE UP</div>
+
+          <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 18, marginTop: 22 }}>
+            <div style={{ ...bevelPanel(PAL.white, { shadow: 6 }), padding: "16px 30px", textAlign: "center" }}>
+              <div style={S.scoreCap}>{p1Name} SCORED</div>
+              <div style={{ ...S.bigScore, color: scoreColor(p1.score) }}>{p1.score}</div>
+              <div style={S.frames}>{p1.hits} / {p1.scored} FRAMES HIT</div>
             </div>
+            <Nameplate kicker="NOW ON DECK" name={p2Name} color={PAL.magenta} sub="ROUND 2" />
           </div>
-        )}
+        </Stage>
+      </Broadcast>
+    );
 
-        {/* ── Handoff (P1 done) ─────────────────────────────────────────── */}
-        {phase === "handoff" && p1 && (
-          <div style={S.card}>
-            <div style={S.cardTitle}>Round 1 complete</div>
-            <div style={{ textAlign: "center", padding: "16px 0" }}>
-              <div style={{ color: "#6b7280", fontSize: 13 }}>{p1Name} scored</div>
-              <div style={{ fontSize: 72, fontWeight: 900, color: scoreColor(p1.score), lineHeight: 1 }}>{p1.score}</div>
-              <div style={{ color: "#374151", fontSize: 12 }}>{p1.hits} / {p1.scored} frames hit</div>
-            </div>
-            <div style={{ color: "#9ca3af", fontSize: 14, textAlign: "center", margin: "8px 0 20px" }}>
-              🎤 Pass the mic to <b style={{ color: "#fff" }}>{p2Name}</b>.
-            </div>
-            <button style={S.primary} onClick={() => setPhase("p2")}>
-              {p2Name}&apos;s turn →
-            </button>
+  // ── Results ──────────────────────────────────────────────────────────────────
+  if (phase === "results" && p1 && p2) {
+    const tie = p1.score === p2.score;
+    const p1Wins = p1.score > p2.score;
+    const winnerName = tie ? "" : p1Wins ? p1Name : p2Name;
+    const loserName  = tie ? "" : p1Wins ? p2Name : p1Name;
+    const margin = Math.abs(p1.score - p2.score);
+    const quote = tie ? roast(p1Name, p2Name, 0) : roast(winnerName, loserName, margin);
+    return (
+      <Broadcast
+        tag="FINAL" tagColor={PAL.slime} blink={false}
+        right="MIC DROP TV · THE VERDICT"
+        lower={
+          <LowerThird
+            kicker="THE MC 🔊" kickerColor={PAL.magenta}
+            headline={<>&ldquo;{quote}&rdquo;</>}
+            action={
+              <div style={{ display: "flex", gap: 10 }}>
+                <BevelBtn color={PAL.slime} big blink onClick={() => reset(false)}>REMATCH »</BevelBtn>
+                <BevelBtn color={PAL.cyan} onClick={() => reset(true)}>NEW PLAYERS</BevelBtn>
+              </div>
+            }
+          />
+        }
+      >
+        <Stage>
+          <div style={S.kickerHead}>{tie ? "IT'S A DEAD HEAT" : "YOUR WINNER"}</div>
+          <div style={S.winnerHead}>{tie ? "TIE GAME" : winnerName}</div>
+
+          <div style={{ marginTop: 26 }}>
+            <ScoreBug big
+              a={{ name: p1Name, score: p1.score, color: PAL.slime, fg: PAL.ink }}
+              b={{ name: p2Name, score: p2.score, color: PAL.magenta, fg: PAL.white }} />
           </div>
-        )}
 
-        {/* ── Results ───────────────────────────────────────────────────── */}
-        {phase === "results" && p1 && p2 && (() => {
-          const tie = p1.score === p2.score;
-          const p1Wins = p1.score > p2.score;
-          const winnerName = tie ? "" : p1Wins ? p1Name : p2Name;
-          const loserName  = tie ? "" : p1Wins ? p2Name : p1Name;
-          const margin = Math.abs(p1.score - p2.score);
-          return (
-            <div style={S.card}>
-              <div style={{ ...S.cardTitle, textAlign: "center", fontSize: 22 }}>
-                {tie ? "🤝 It's a tie!" : `🏆 ${winnerName} wins!`}
+          {!tie && (
+            <Splat color={PAL.yellow} size={108} spin style={{ marginTop: 30 }}>
+              <div style={{ fontFamily: FONT.display, fontSize: 18, color: PAL.ink, lineHeight: 1 }}>
+                {winnerName}<br />WINS
               </div>
+            </Splat>
+          )}
+        </Stage>
+      </Broadcast>
+    );
+  }
 
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, margin: "20px 0" }}>
-                {([[p1Name, p1, p1Wins], [p2Name, p2, !p1Wins && !tie]] as const).map(([name, r, won], i) => (
-                  <div key={i} style={{
-                    background: "#0a0a18",
-                    border: `1px solid ${won ? "#4ade8055" : "#0f0f1a"}`,
-                    borderRadius: 12, padding: 16, textAlign: "center",
-                  }}>
-                    <div style={{ color: "#9ca3af", fontSize: 13, fontWeight: 600 }}>
-                      {won ? "👑 " : ""}{name}
-                    </div>
-                    <div style={{ fontSize: 56, fontWeight: 900, color: scoreColor(r.score), lineHeight: 1.1 }}>{r.score}</div>
-                    <div style={{ color: "#374151", fontSize: 11 }}>{r.hits}/{r.scored} hit</div>
-                  </div>
-                ))}
-              </div>
+  // ── Defensive fallback (preserves render contract) ──────────────────────────
+  return (
+    <Broadcast tag="STANDBY" tagColor={PAL.cyan} blink={false} right="MIC DROP TV"
+      lower={<LowerThird headline="Resetting the board…" />}>
+      <Stage>
+        <div style={S.kickerHead}>STAND BY</div>
+      </Stage>
+    </Broadcast>
+  );
+}
 
-              <div style={{ color: "#e5e7eb", fontSize: 14, fontStyle: "italic", textAlign: "center", marginBottom: 20 }}>
-                "{tie ? roast(p1Name, p2Name, 0) : roast(winnerName, loserName, margin)}"
-              </div>
-
-              <button style={S.primary} onClick={() => reset(false)}>↺ Rematch (same players)</button>
-              <button style={S.ghost} onClick={() => reset(true)}>New players</button>
-            </div>
-          );
-        })()}
-      </div>
+// ── Shell: ON-AIR bar → purple stage → lower-third ──────────────────────────
+function Broadcast({ tag, tagColor, blink, right, lower, children }: {
+  tag: string; tagColor: string; blink: boolean; right: string;
+  lower: React.ReactNode; children: React.ReactNode;
+}) {
+  return (
+    <div style={{ minHeight: "100vh", display: "flex", flexDirection: "column", background: PAL.ink }}>
+      <OnAirBar tag={tag} tagColor={tagColor} blink={blink} right={right} />
+      {children}
+      {lower}
     </div>
   );
 }
 
-function scoreColor(s: number) { return s >= 80 ? "#4ade80" : s >= 50 ? "#facc15" : "#f87171"; }
+function Stage({ children }: { children: React.ReactNode }) {
+  return (
+    <StageBG>
+      <div style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center",
+        justifyContent: "center", padding: "36px 24px", textAlign: "center" }}>
+        {children}
+      </div>
+    </StageBG>
+  );
+}
+
+function scoreColor(s: number) { return s >= 80 ? PAL.slimeDk : s >= 50 ? PAL.orangeDk : PAL.red; }
 
 const S: Record<string, React.CSSProperties> = {
-  root: { minHeight: "100vh", background: "#07070f", color: "#fff", fontFamily: "'Inter', system-ui, sans-serif", display: "flex", alignItems: "center", justifyContent: "center", padding: 24 },
-  inner: { width: "100%", maxWidth: 460 },
-  brand: { display: "flex", alignItems: "center", gap: 12, marginBottom: 20, justifyContent: "center" },
-  logo: { width: 44, height: 44, borderRadius: 10, background: "linear-gradient(135deg,#7c3aed,#4f46e5)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 22 },
-  card: { background: "#0c0c16", border: "1px solid #15151f", borderRadius: 16, padding: 24 },
-  cardTitle: { fontSize: 17, fontWeight: 700, marginBottom: 8, color: "#f3f4f6" },
-  label: { display: "block", color: "#6b7280", fontSize: 11, textTransform: "uppercase", letterSpacing: 1, marginBottom: 6 },
-  input: { display: "block", width: "100%", boxSizing: "border-box", background: "#15151f", border: "1px solid #222230", borderRadius: 8, padding: "10px 14px", color: "#fff", fontSize: 15, marginBottom: 16 },
-  primary: { width: "100%", background: "linear-gradient(135deg,#7c3aed,#6d28d9)", border: "none", borderRadius: 10, color: "#fff", padding: "13px 20px", cursor: "pointer", fontSize: 15, fontWeight: 700, marginTop: 4 },
-  ghost: { width: "100%", background: "transparent", border: "1px solid #222230", borderRadius: 10, color: "#9ca3af", padding: "11px 20px", cursor: "pointer", fontSize: 14, fontWeight: 600, marginTop: 10 },
+  kickerHead: { fontFamily: FONT.display, fontSize: 26, color: PAL.yellow, letterSpacing: 4,
+    textShadow: `3px 3px 0 ${PAL.ink}`, marginBottom: 12 },
+  handoffHead: { fontFamily: FONT.display, fontSize: "clamp(48px, 9vw, 96px)", color: PAL.white,
+    letterSpacing: 1, lineHeight: 0.95, textShadow: `5px 5px 0 ${PAL.ink}`, transform: "rotate(-1deg)" },
+  winnerHead: { fontFamily: FONT.display, fontSize: "clamp(56px, 11vw, 110px)", color: PAL.white,
+    letterSpacing: 1, lineHeight: 0.95, textShadow: `5px 5px 0 ${PAL.ink}`, transform: "rotate(-1deg)",
+    textTransform: "uppercase" },
+  vsRow: { display: "flex", alignItems: "center", gap: 22, flexWrap: "wrap", justifyContent: "center" },
+  vsTxt: { fontFamily: FONT.display, fontSize: 40, color: PAL.white, textShadow: `4px 4px 0 ${PAL.ink}` },
+  label: { display: "block", color: PAL.ink, fontFamily: FONT.display, fontSize: 15, letterSpacing: 1,
+    textTransform: "uppercase", marginBottom: 6 },
+  input: { display: "block", width: "100%", boxSizing: "border-box", background: PAL.cream,
+    border: `3px solid ${PAL.ink}`, borderRadius: 0, padding: "10px 14px", color: PAL.ink,
+    fontFamily: FONT.body, fontWeight: 700, fontSize: 16, marginBottom: 16 },
+  note: { fontFamily: FONT.mono, fontSize: 16, color: PAL.purpleDp, marginTop: 4 },
+  scoreCap: { fontFamily: FONT.display, fontSize: 15, color: PAL.ink, letterSpacing: 1 },
+  bigScore: { fontFamily: FONT.display, fontSize: 84, lineHeight: 1 },
+  frames: { fontFamily: FONT.mono, fontSize: 16, color: PAL.ink },
 };

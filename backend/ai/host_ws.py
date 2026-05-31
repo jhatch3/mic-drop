@@ -109,14 +109,17 @@ async def host_ws(ws: WebSocket) -> None:
     contents: list[types.Content] = []
     turn_lock = asyncio.Lock()   # one host turn generates/speaks at a time
 
+    # Cumulative audio (ms) queued in the CURRENT turn pass — the clock that captions and tool
+    # actions are scheduled against, so on-screen events fire exactly when his voice reaches them.
+    am = {"ms": 0.0}
+
     async def speak(sentence: str) -> None:
         """Speak ONE full sentence (smooth ElevenLabs utterance) and send timed phrase captions."""
         sentence = sentence.strip()
         if not sentence:
             return
         phrases = _split_phrases(sentence)
-        # speak_start anchors the browser's caption clock to when THIS sentence's audio begins.
-        await ws.send_json({"type": "speak_start"})
+        base = am["ms"]   # audio offset (ms from the pass anchor) where this sentence starts
         total_bytes = 0
         rem = bytearray()
         try:
@@ -129,13 +132,13 @@ async def host_ws(ws: WebSocket) -> None:
                     del rem[:n]
         except Exception:  # noqa: BLE001 — never let TTS kill the turn
             log.exception("host TTS failed for sentence")
-        # spread the phrases across the sentence's audio duration (PCM16 mono @ 24kHz)
-        dur = (total_bytes / 2) / 24000 if total_bytes else 0.0
+        dur_ms = (total_bytes / 2) / 24000 * 1000 if total_bytes else 0.0
         total_chars = sum(len(p) for p in phrases) or 1
         cues, acc = [], 0
         for p in phrases:
-            cues.append({"text": p, "offset_ms": int((acc / total_chars) * dur * 1000)})
+            cues.append({"text": p, "offset_ms": int(base + (acc / total_chars) * dur_ms)})
             acc += len(p)
+        am["ms"] = base + dur_ms
         await ws.send_json({"type": "caption_cues", "cues": cues})
 
     async def flush_sentences(buf: str, *, final: bool) -> str:
@@ -158,8 +161,11 @@ async def host_ws(ws: WebSocket) -> None:
             contents.append(types.Content(role="user", parts=[types.Part(text=user_text)]))
             try:
                 while True:   # function-calling loop
+                    # Anchor this pass's audio clock on the browser, then reset our offset.
+                    await ws.send_json({"type": "audio_anchor"})
+                    am["ms"] = 0.0
                     text_acc, buf = "", ""
-                    fcs: list[types.FunctionCall] = []
+                    fcs: list[tuple[types.FunctionCall, float]] = []   # (call, audio offset ms)
                     stream = await client.aio.models.generate_content_stream(
                         model=config.GEMINI_MODEL, contents=contents, config=make_cfg(),
                     )
@@ -173,26 +179,27 @@ async def host_ws(ws: WebSocket) -> None:
                                     buf += p.text
                                     buf = await flush_sentences(buf, final=False)
                                 if getattr(p, "function_call", None):
-                                    fcs.append(p.function_call)
+                                    fcs.append((p.function_call, am["ms"]))   # tag with WHERE in the audio
+
                     await flush_sentences(buf, final=True)
 
                     # record the model's turn in history (text + any tool calls)
                     model_parts: list[types.Part] = []
                     if text_acc:
                         model_parts.append(types.Part(text=text_acc))
-                    model_parts.extend(types.Part(function_call=fc) for fc in fcs)
+                    model_parts.extend(types.Part(function_call=fc) for fc, _ in fcs)
                     if model_parts:
                         contents.append(types.Content(role="model", parts=model_parts))
 
                     if not fcs:
                         break
-                    # run the tools, relay control messages, feed responses back, loop again
+                    # run the tools, relay control messages (timed to the audio), feed responses back
                     resp_parts: list[types.Part] = []
-                    for fc in fcs:
+                    for fc, at_ms in fcs:
                         response, action = await dispatch(fc.name, dict(fc.args or {}))
                         resp_parts.append(types.Part.from_function_response(name=fc.name, response=response))
                         if action:
-                            await ws.send_json(action)
+                            await ws.send_json({**action, "at_ms": int(at_ms)})
                     contents.append(types.Content(role="user", parts=resp_parts))
             except Exception:  # noqa: BLE001
                 log.exception("host turn failed")

@@ -5,20 +5,29 @@ import type { DanceScore } from "../dance/types";
 
 const DANCE_SCORE_URL = "/api/dance/score";
 
-export function useDance(songId: string) {
+export function useDance(songId: string, onSongEnd?: () => void) {
   const pose = usePoseDetection();
   const choreo = useChoreography(songId);
   const [liveScore, setLiveScore] = useState(0);
   const [dancingActive, setDancingActive] = useState(false);
   const playbackStartRef = useRef<number>(0);
   const audioRef = useRef<HTMLAudioElement | null>(null);
+  // A dance turn auto-ends when the instrumental finishes. Keep the latest callback in a ref
+  // so the "ended" listener (attached once at preload) always calls the current handler, and
+  // only while a turn is actually active (dancingActive).
+  const onSongEndRef = useRef(onSongEnd);
+  onSongEndRef.current = onSongEnd;
+  const dancingActiveRef = useRef(false);
+  dancingActiveRef.current = dancingActive;
 
   // Pre-load instrumental
   useEffect(() => {
     const audio = new Audio(`/assets/songs/${songId}/instrumental.mp3`);
     audio.preload = "auto";
+    const onEnded = () => { if (dancingActiveRef.current) onSongEndRef.current?.(); };
+    audio.addEventListener("ended", onEnded);
     audioRef.current = audio;
-    return () => { audio.pause(); };
+    return () => { audio.removeEventListener("ended", onEnded); audio.pause(); };
   }, [songId]);
 
   useEffect(() => {
