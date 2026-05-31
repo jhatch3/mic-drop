@@ -84,6 +84,7 @@ function playPCM24(arrayBuf) {
 // duration), then fetch+decode and play it at that exact slot. Voice queued
 // after this will start only once the SFX finishes.
 const SFX_TAIL = 0.45;   // let the next audio come in this early on the SFX's quiet tail
+const SFX_GAIN = 0.45;   // sound effects sit a bit under the host's voice
 async function scheduleSfx(name, duration) {
   const ctx = ensurePlay();
   const start = Math.max(ctx.currentTime + 0.02, nextTime);
@@ -94,7 +95,8 @@ async function scheduleSfx(name, duration) {
     const ab = await (await fetch(`/sfx-audio/${name}.mp3`)).arrayBuffer();
     const buf = await ctx.decodeAudioData(ab);
     const src = ctx.createBufferSource();
-    src.buffer = buf; src.connect(ctx.destination);
+    const gain = ctx.createGain(); gain.gain.value = SFX_GAIN;
+    src.buffer = buf; src.connect(gain); gain.connect(ctx.destination);
     src.start(start);
     nextTime = slot(buf.duration);             // correct to real (trimmed) length
   } catch (e) { logLine(`sfx load failed: ${name}`); }
