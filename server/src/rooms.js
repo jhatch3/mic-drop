@@ -16,9 +16,9 @@ function createRoom({ hostWallet, stake, hostSocketId }) {
     hostWallet,
     stake,          // lamports
     players: [
-      { wallet: hostWallet, socketId: hostSocketId, name: "P1", score: null },
+      { wallet: hostWallet, socketId: hostSocketId, name: "P1", score: null, staked: false },
     ],
-    state: "waiting", // waiting | p1_singing | p2_singing | finished
+    state: "waiting", // waiting | staking | p1_singing | p2_singing | finished
     matchId: null,
     winner: null,
     createdAt: Date.now(),
@@ -34,7 +34,7 @@ function joinRoom(code, { wallet, socketId }) {
   if (room.players.length >= 2) return { error: "Room is full" };
   if (room.players[0].wallet === wallet) return { error: "Already in room" };
 
-  room.players.push({ wallet, socketId, name: "P2", score: null });
+  room.players.push({ wallet, socketId, name: "P2", score: null, staked: false });
   return { room };
 }
 
@@ -54,11 +54,21 @@ function setMatchId(code, matchId) {
   if (room) room.matchId = matchId;
 }
 
-function startGame(code) {
+function startGame(code, soloP2Wallet) {
   const room = rooms.get(code);
   if (!room) return { error: "Room not found" };
-  if (room.players.length < 2) return { error: "Need 2 players" };
   if (room.state !== "waiting") return { error: "Already started" };
+  // Solo test mode: no phone joined. Inject a synthetic P2 (the laptop-held demo
+  // stake key, passed as soloP2Wallet) so the turn flow p1_singing → p2_singing →
+  // finished runs with the host singing both takes. Without soloP2Wallet we still
+  // require a real second player.
+  if (room.players.length < 2) {
+    if (!soloP2Wallet) return { error: "Need 2 players" };
+    room.players.push({
+      wallet: soloP2Wallet, socketId: room.hostSocketId,
+      name: "P2", score: null, solo: true,
+    });
+  }
   room.state = "p1_singing";
   return { room };
 }
@@ -86,8 +96,20 @@ function submitScore(code, wallet, score) {
   return { error: "Not your turn" };
 }
 
+// Mark a player as having staked on-chain. Returns { room, bothStaked }
+function markStaked(code, wallet) {
+  const room = rooms.get(code);
+  if (!room) return { error: "Room not found" };
+  const player = room.players.find(p => p.wallet === wallet);
+  if (!player) return { error: "Not in room" };
+  player.staked = true;
+  const bothStaked = room.players.length === 2 && room.players.every(p => p.staked);
+  if (bothStaked) room.state = "staking_complete";
+  return { room, bothStaked };
+}
+
 function deleteRoom(code) {
   rooms.delete(code);
 }
 
-module.exports = { createRoom, joinRoom, getRoom, getRoomBySocket, setMatchId, startGame, submitScore, deleteRoom };
+module.exports = { createRoom, joinRoom, getRoom, getRoomBySocket, setMatchId, startGame, submitScore, markStaked, deleteRoom };

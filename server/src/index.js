@@ -4,7 +4,7 @@ const { Server } = require("socket.io");
 const cors = require("cors");
 const {
   createRoom, joinRoom, getRoom, getRoomBySocket,
-  setMatchId, startGame, submitScore, deleteRoom,
+  setMatchId, startGame, submitScore, markStaked, deleteRoom,
 } = require("./rooms");
 
 const PORT = process.env.PORT || 3001;
@@ -39,6 +39,7 @@ function publicRoom(room) {
       name: p.name,
       wallet: p.wallet,
       score: p.score,
+      staked: p.staked ?? false,
     })),
   };
 }
@@ -80,10 +81,23 @@ io.on("connection", (socket) => {
     broadcast(code?.toUpperCase(), "room:updated", publicRoom(getRoom(code)));
   });
 
+  // ── player:staked ────────────────────────────────────────────────────────
+  // payload: { code: string, wallet: string }
+  // Called after a player successfully signs the stake tx on-chain.
+  socket.on("player:staked", ({ code, wallet } = {}) => {
+    const result = markStaked(code?.toUpperCase(), wallet);
+    if (result.error) return socket.emit("error", { msg: result.error });
+    broadcast(result.room.code, "room:updated", publicRoom(result.room));
+    if (result.bothStaked) {
+      broadcast(result.room.code, "stakes:ready", publicRoom(result.room));
+      console.log(`Both staked in room ${result.room.code} — ready to start`);
+    }
+  });
+
   // ── game:start ───────────────────────────────────────────────────────────
   // payload: { code: string }
-  socket.on("game:start", ({ code } = {}) => {
-    const result = startGame(code?.toUpperCase());
+  socket.on("game:start", ({ code, soloP2Wallet } = {}) => {
+    const result = startGame(code?.toUpperCase(), soloP2Wallet);
     if (result.error) return socket.emit("error", { msg: result.error });
     broadcast(result.room.code, "game:started", publicRoom(result.room));
     broadcast(result.room.code, "turn:start", { player: "P1", wallet: result.room.players[0].wallet });

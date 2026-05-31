@@ -1,5 +1,11 @@
 [
   {
+    "song_id": "rasputin",
+    "title": "Rasputin",
+    "artist": "Boney M.",
+    "difficulty": 3
+  },
+  {
     "song_id": "firework",
     "title": "Firework",
     "artist": "Katy Perry",

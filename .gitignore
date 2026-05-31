@@ -150,6 +150,10 @@ activemq-data/
 # SageMath parsed files
 *.sage.py
 
+# Secrets / generated keys
+oracle-keypair.json
+backend/oracle-keypair.json
+
 # Environments
 node_modules
 .env
@@ -222,3 +226,6 @@ __marimo__/
 # Streamlit
 .streamlit/secrets.toml
 .vercel
+
+# Dance reference media
+assets/dances/
