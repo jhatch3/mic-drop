@@ -33,8 +33,12 @@ export default function Player() {
   const { connection } = useConnection();
   const socket = getSocket();
 
-  // Generate a stable guest ID for this session (no wallet needed)
+  // Generate a stable guest ID for this session (no wallet needed).
+  // At join time we prefer the real wallet address so on-chain staking works;
+  // this is only used when no wallet is connected.
   const guestId = useMemo(() => "guest-" + Math.random().toString(36).slice(2, 10), []);
+  // Stable identity used for the lifetime of this session — set when joinRoom() fires.
+  const [myWalletId, setMyWalletId] = useState(guestId);
 
   // Pre-fill code from URL ?code=PITCH1
   const urlCode = new URLSearchParams(window.location.search).get("code") ?? "";
@@ -61,7 +65,7 @@ export default function Player() {
       addLog("Game started! Get ready.");
     });
     socket.on("turn:start", (t: { player: string; wallet: string }) => {
-      if (t.wallet === guestId) {
+      if (t.wallet === myWalletId) {
         setMyTurn(true);
         setTurnDone(false);
         addLog("You're up — sing on the laptop!");
@@ -119,13 +123,17 @@ export default function Player() {
   const joinRoom = () => {
     if (!code) return;
     setError("");
-    socket.emit("room:join", { code: code.toUpperCase(), wallet: guestId });
+    // Use the real wallet address when connected — required for on-chain staking.
+    // Fall back to a guest ID so wallet-less players can still join and play.
+    const id = wallet.publicKey?.toBase58() ?? guestId;
+    setMyWalletId(id);
+    socket.emit("room:join", { code: code.toUpperCase(), wallet: id });
     setJoined(true);
     addLog(`Joining room ${code}…`);
   };
 
-  const myInfo = room?.players.find((p) => p.wallet === guestId);
-  const opponentInfo = room?.players.find((p) => p.wallet !== guestId);
+  const myInfo = room?.players.find((p) => p.wallet === myWalletId);
+  const opponentInfo = room?.players.find((p) => p.wallet !== myWalletId);
   // Device model: the phone is a CONTROLLER only — it links your account (wallet) and
   // readies up. All singing + pitch + lyrics happen on the laptop karaoke station; no
   // audio ever leaves the phone. So there is no Karaoke render here.
@@ -316,6 +324,23 @@ export default function Player() {
         <ScoreBug
           a={{ name: "YOU", score: fmtScore(youScore), color: PAL.slime }}
           b={{ name: "THEM", score: fmtScore(oppScore), color: PAL.magenta, fg: PAL.white }} />
+        {room.matchId && !staked && wallet.publicKey && (
+          <Panel color={PAL.white} title="STAKE TO PLAY" titleBg={PAL.cyanDk} titleFg={PAL.white} style={{ width: "100%" }}>
+            <div style={{ fontFamily: FONT.mono, fontSize: 15, color: PAL.purpleDp, marginBottom: 10 }}>
+              Lock your wager while your opponent sings.
+            </div>
+            <BevelBtn color={PAL.orange} fg={PAL.white} big
+              onClick={stakeOnChain} disabled={staking || !wallet.publicKey}
+              style={{ width: "100%", justifyContent: "center" }}>
+              {staking ? "STAKING…" : `★ STAKE ${(room.stake / 1e9).toFixed(3)} SOL`}
+            </BevelBtn>
+          </Panel>
+        )}
+        {staked && (
+          <div style={{ ...bevelPanel(PAL.slime), padding: 10, color: PAL.ink, fontFamily: FONT.mono, fontSize: 15, width: "100%", boxSizing: "border-box" }}>
+            ✓ Staked — you're in the game.
+          </div>
+        )}
       </>,
       <LowerThird kicker="STANDBY" kickerColor={PAL.cyan} kickerFg={PAL.ink}
         headline={(opponentInfo?.name ?? "Opponent") + " is on the mic."} />,

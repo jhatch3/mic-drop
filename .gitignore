@@ -19,6 +19,8 @@ eggs/
 .eggs/
 lib/
 lib64/
+# Allow frontend/src/lib (shadcn utils)
+!frontend/src/lib/
 parts/
 sdist/
 var/
