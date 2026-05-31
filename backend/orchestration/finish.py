@@ -259,18 +259,14 @@ async def handle_finish(
     # 3. Winner.
     winner = _pick_winner(s1, s2)
 
-    # 4. Commentary (async Gemini/mock) + settle concurrently, then voice the roast.
-    commentary, payout_tx = await asyncio.gather(
-        _commentary(song_id, int(s1["score"]), int(s2["score"]), winner),
-        _settle(
-            match_id=match_id,
-            winner_label=winner,
-            p1_pubkey=p1_pubkey,
-            p2_pubkey=p2_pubkey,
-        ),
+    # 4. Settle only. The live host announces + roasts over the voice WebSocket now, so we do
+    #    NOT generate the Gemini roast text or the ElevenLabs MC clip here — that was the main
+    #    latency. This lets /match/finish return the scores in ~scoring time (target ~5s).
+    payout_tx = await _settle(
+        match_id=match_id, winner_label=winner, p1_pubkey=p1_pubkey, p2_pubkey=p2_pubkey,
     )
-    mc_audio = await _mc_audio_bytes(commentary)
-    mc_url = _save_mc(mc_audio, match_id)
+    commentary = ""
+    mc_url = ""
 
     _persist(
         match_id=match_id,

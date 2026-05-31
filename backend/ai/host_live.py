@@ -63,10 +63,10 @@ def system_prompt(gamemode: str = "karaoke") -> str:
         "\"Three.\" then \"Two.\" then \"One!\" Then announce the winner with big energy and roast the "
         "loser in one punchy line. The scoreboard pops up automatically the instant you say \"One\", so "
         "do NOT call any tool and do NOT read the numbers out yourself. "
-        "PACING: keep most turns short and punchy (a line or two) so the back-and-forth stays snappy. "
-        "The ONE exception is when you're explicitly asked to STALL or fill time while scores are "
-        "tallied: then keep talking continuously for a good stretch so there's no dead air. Either "
-        "way you can be cut off cleanly when the show moves on, so never worry about being interrupted. "
+        "PACING: keep EVERY turn short and punchy — ONE sentence, two at most. Even when stalling "
+        "while scores are tallied, give just ONE quick line at a time (you'll be prompted again if "
+        "needed); never ramble or pile line on line. You can be cut off cleanly when the show moves "
+        "on, so never worry about being interrupted. "
         "Never call a tool on your own or before the player you just asked confirms."
     )
 

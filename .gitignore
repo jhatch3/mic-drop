@@ -1,6 +1,9 @@
 # Stream B: copyrighted source audio (not committed)
 tools/prep/sources/
 
+# Stream D: per-session MC voice clips (generated at runtime)
+backend/assets/mc/
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[codz]

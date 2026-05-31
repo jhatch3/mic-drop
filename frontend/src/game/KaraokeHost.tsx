@@ -7,7 +7,7 @@ import { useGameRoom } from "../services/useGameRoom";
 import { useEscrow } from "../services/useEscrow";
 import { useVoiceHost } from "./useVoiceHost";
 import Karaoke, { type KaraokeResult } from "./Karaoke";
-import { PAL, FONT, BevelBtn, Panel, Splat, Confetti, OnAirBar, StageBG, LowerThird, ScoreBug, Nameplate } from "@/ui";
+import { PAL, FONT, BevelBtn, Panel, Confetti, OnAirBar, StageBG, LowerThird, ScoreBug, Nameplate } from "@/ui";
 
 const kicker = (c: string): CSSProperties => ({ fontFamily: FONT.display, fontSize: "clamp(20px,4vw,30px)", letterSpacing: 4, color: c, textShadow: `2px 2px 0 ${PAL.ink}` });
 
@@ -28,15 +28,20 @@ const SONG_ID = "firework";
 // Epic victory fanfare, fired when the confetti shoots on the reveal.
 const playVictory = () => { try { const a = new Audio(`${API_BASE}/api/sfx/victory`); a.volume = 0.9; void a.play().catch(() => {}); } catch { /* */ } };
 
+// "I'm ready" / "let's go" etc. — detected in the player's speech to start instantly.
+const READY_RE = /\b(ready|yes|yea|yeah|yep|let'?s go|i'?m ready|let'?s do it|bring it|hit it|do it|set)\b/i;
+
 // Rotating stall prompts — the host keeps talking through these (one per turn) until the
 // scores load, so the scoring screen NEVER has dead air. Each asks for a longer, continuous
 // run of banter so there's no silence between turns. NEVER reveal a winner here.
 // Continuous stall prompts. We send ONE and let the host talk for a good stretch (fewer
 // turn-startup gaps = no pausing). The moment scores land we flushAudio() and cut to the
 // announce, so a long run can't lag — it just gets interrupted cleanly.
+// Short stall lines while the judges tally (~5s). ONE punchy sentence each — no monologue.
 const FILLERS = [
-  "Both singers are done and the judges are counting! Keep the crowd HOT and talk continuously for a good while, no pauses: hype the showdown, drop a couple fun facts about the song or artist, tease how close it might be, crack a joke. Keep rolling until you're handed the result. Do NOT announce a winner yet.",
-  "Keep the energy rolling non-stop — more hype, more facts, more jokes, tease the suspense. Still no winner; just keep them entertained until the scores drop.",
+  "Say ONE short, high-energy line: both singers are done and the judges are tallying. No winner yet.",
+  "ONE short sentence teasing how close it is. Still no winner.",
+  "ONE short quip while we wait. No winner yet.",
 ];
 
 interface ScoreRow { player_id: string; score: number; pitch_score?: number; lyrics_score?: number; transcript?: string; }
@@ -97,6 +102,9 @@ export default function KaraokeHost() {
   const pendingStartRef = useRef<null | "p1" | "p2">(null);
   const fallbackTimerRef = useRef<any>(null);            // ensures the round starts if turn_complete is odd
   const [countdown, setCountdown] = useState<number | null>(null);
+  const countdownRef = useRef<number | null>(null);
+  countdownRef.current = countdown;
+  const lastStartedRef = useRef<"p1" | "p2" | null>(null);   // which turn we've already kicked off
   const [revealCountdown, setRevealCountdown] = useState<number | null>(null);   // "THE WINNER IS… 3-2-1"
   const [confetti, setConfetti] = useState(false);   // 🎉 burst on the winner reveal
 
@@ -106,18 +114,26 @@ export default function KaraokeHost() {
   const fillerRef = useRef(0);                           // which stall prompt we're on
   const tellFillerRef = useRef<() => void>(() => {});
 
+  // Start a turn instantly — drive the 3-2-1 countdown off the player's spoken "ready", so
+  // there's no wait for the host round-trip. Defined via a ref (it uses `voice`, declared below).
+  const tryStartReadyRef = useRef<(t: string) => void>(() => {});
+
   const voice = useVoiceHost({
     onHostCaption: (t) => revealDriverRef.current(t),   // reveal scores off his spoken count
+    onUserSpeech: (t) => tryStartReadyRef.current(t),   // start instantly on "ready"
     allowSfx: () => !singingRef.current,                // no SFX while a player is singing
     onCommand: (cmd) => {
-      // Guard by game state so a stray/early tool call can't jump turns: P1 only before any
-      // turn; P2 only once P1 is done and we're waiting on P2.
+      // Guard by game state so a stray/early/duplicate tool call can't jump or double-start a
+      // turn: P1 only before any turn; P2 only once P1 is done and we're waiting on P2; never if
+      // a countdown is already running or that turn was already kicked off.
       let which: "p1" | "p2" | null = null;
       if (cmd === "start_game" || cmd === "start_p1_turn") {
-        if (singingRef.current || pendingP2Ref.current || finishRef.current) return;
+        if (singingRef.current || pendingP2Ref.current || finishRef.current
+          || countdownRef.current !== null || lastStartedRef.current === "p1") return;
         which = "p1";
       } else if (cmd === "start_p2_turn") {
-        if (!pendingP2Ref.current || singingRef.current) return;   // ignore if P1 not finished yet
+        if (!pendingP2Ref.current || singingRef.current
+          || countdownRef.current !== null || lastStartedRef.current === "p2") return;
         which = "p2";
       } else {
         return;   // reveal_scores / end_game: reveal is caption-driven now
@@ -158,27 +174,27 @@ export default function KaraokeHost() {
     createRoom(wallet.publicKey.toBase58(), Math.floor(parseFloat(stakeSOL) * LAMPORTS_PER_SOL), "karaoke");
   }, [wallet.publicKey, stakeSOL, createRoom]);
 
-  // "Start Game" button — pressed once BOTH players have joined. This user gesture brings
-  // the host in (unlocks audio); the backend auto-greets and asks if we're ready to start.
-  const handleEnterHost = useCallback(() => {
-    voice.connect(true);
-    // Warm the scoring music bed now (first generation takes a few seconds) so it's cached
-    // and ready the instant we reach the scoring screen.
+  // Lobby "STAKE TO PLAY" — pressed once BOTH players have joined. Locks the wager on-chain
+  // (best-effort), THEN brings the host in (this gesture unlocks audio); the host greets and
+  // takes over the show. Pre-warms the SFX so they're cached for later.
+  const handleStakeAndStart = useCallback(async () => {
+    if (!room) return;
+    if (room.players.length >= 2) {
+      try { await createAndStake(room.code, room.players[1].wallet, room.stake); addLog("Wager staked ✓"); }
+      catch (e: any) { addLog("stake skipped: " + e.message); }   // best-effort — never block the show
+    }
+    voice.connect(true);   // host takes over
     fetch(`${API_BASE}/api/sfx/scoring_music`).catch(() => {});
-    fetch(`${API_BASE}/api/sfx/victory`).catch(() => {});   // pre-warm the victory fanfare
-  }, [voice]);
+    fetch(`${API_BASE}/api/sfx/victory`).catch(() => {});
+  }, [room, createAndStake, addLog, voice]);
 
   // Host called start_p1_turn (after hearing "ready") → begin the match and put P1 on stage.
-  // Staking is best-effort so the game always begins — never blocks on a wallet.
+  // (Wager was already staked in the lobby.)
   const startP1 = useCallback(async () => {
     if (!room || singingRef.current) return;
-    if (room.players.length >= 2) {
-      try { await createAndStake(room.code, room.players[1].wallet, room.stake); }
-      catch (e: any) { addLog("stake skipped: " + e.message); }
-    }
     if (phase === "waiting") beginGame(room.code);   // server: game:started + turn P1
     setSinging("p1");                                 // local: render P1's station now
-  }, [room, phase, createAndStake, beginGame, addLog]);
+  }, [room, phase, beginGame]);
   startRef.current = startP1;
 
   // Host called start_p2_turn (after Player 2 says ready) → put P2 on stage. P1's score was
@@ -188,6 +204,16 @@ export default function KaraokeHost() {
     setSinging("p2");
   }, []);
   advanceRef.current = advanceToP2;
+
+  tryStartReadyRef.current = (text: string) => {
+    if (countdownRef.current !== null || singingRef.current) return;   // already starting / mid-turn
+    if (!READY_RE.test(text)) return;
+    if (!finishRef.current && !pendingP2Ref.current && lastStartedRef.current !== "p1") {
+      lastStartedRef.current = "p1"; voice.stopListening(); startCountdownRef.current("p1");
+    } else if (pendingP2Ref.current && lastStartedRef.current !== "p2") {
+      lastStartedRef.current = "p2"; voice.stopListening(); startCountdownRef.current("p2");
+    }
+  };
 
   // 3-2-1 countdown (big on screen), then actually start the turn so the music begins on "GO".
   const startCountdownRef = useRef<(which: "p1" | "p2") => void>(() => {});
@@ -420,7 +446,8 @@ export default function KaraokeHost() {
       <OnAirBar home="/" tag={bar.tag} tagColor={bar.color} blink={false} right={bar.right}
         left={<div style={{ marginLeft: 8 }}><WalletMultiButton /></div>} />
       <StageBG>
-        <div style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 18, padding: "32px 18px", width: "100%", maxWidth: 860, margin: "0 auto" }}>
+        {/* overflowY:auto + center-when-it-fits so a tall results screen isn't clipped by the stage */}
+        <div style={{ flex: 1, minHeight: 0, overflowY: "auto", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "safe center", gap: 18, padding: "32px 18px", width: "100%", maxWidth: 860, margin: "0 auto" }}>
 
           {phase === "lobby" && (
             <>
@@ -465,7 +492,7 @@ export default function KaraokeHost() {
                 Both takes are in — the MC's deliberating while the judges count every frame.
               </div>
               <div style={{ width: "100%", maxWidth: 560, height: 18, border: `3px solid ${PAL.ink}`, background: PAL.white, overflow: "hidden" }}>
-                <div style={{ height: "100%", width: "70%", background: `repeating-linear-gradient(45deg, ${PAL.orange} 0 12px, ${PAL.yellow} 12px 24px)` }} />
+                <div style={{ height: "100%", width: "5%", background: `repeating-linear-gradient(45deg, ${PAL.orange} 0 12px, ${PAL.yellow} 12px 24px)`, animation: "mdLoadFill 5s ease-out forwards" }} />
               </div>
               <div style={{ fontFamily: FONT.mono, fontSize: 15, color: PAL.cyan }}>lyrics ×0.8 + pitch ×0.2 — the MC's keeping the crowd warm…</div>
             </>
@@ -496,10 +523,21 @@ export default function KaraokeHost() {
                     );
                   })}
                 </div>
-                {finish.winner !== "tie" && finish.payout_tx && (
-                  <Splat color={PAL.yellow} size={130} style={{ fontFamily: FONT.display, fontSize: 14, color: PAL.ink, padding: 10, transform: "rotate(-6deg)" }}>
-                    PAID ✓<br /><span style={{ fontFamily: FONT.mono, fontSize: 11 }}>{finish.payout_tx.slice(0, 14)}…</span>
-                  </Splat>
+                {finish.payout_tx && (
+                  <Panel color={PAL.white} title={finish.winner === "tie" ? "💸 REFUNDED" : "💸 PAYOUT"} titleBg={PAL.ink} titleFg={PAL.yellow} style={{ width: "100%", maxWidth: 600 }}>
+                    <div style={{ fontFamily: FONT.display, fontSize: 15, letterSpacing: 1, color: PAL.slimeDk, marginBottom: 6 }}>
+                      {finish.winner === "tie" ? "STAKES RETURNED" : `${(finish.winner === "p1" ? room.players[0]?.name : room.players[1]?.name) ?? "WINNER"} TAKES THE POT ✓`}
+                    </div>
+                    <div style={{ fontFamily: FONT.mono, fontSize: 13, color: PAL.ink, wordBreak: "break-all" }}>
+                      <span style={{ color: PAL.purpleDp }}>tx:</span> {finish.payout_tx}
+                    </div>
+                    {/^[1-9A-HJ-NP-Za-km-z]{30,}$/.test(finish.payout_tx) && (
+                      <a href={`https://explorer.solana.com/tx/${finish.payout_tx}?cluster=devnet`} target="_blank" rel="noreferrer"
+                        style={{ display: "inline-block", marginTop: 8, fontFamily: FONT.display, fontSize: 14, letterSpacing: 1, color: PAL.cyanDk }}>
+                        VIEW ON SOLANA EXPLORER »
+                      </a>
+                    )}
+                  </Panel>
                 )}
                 {finish.commentary && (
                   <Panel color={PAL.white} title="THE MC · THE VERDICT" titleBg={PAL.magenta} titleFg={PAL.white} style={{ maxWidth: 600, width: "100%" }}>
@@ -527,13 +565,19 @@ export default function KaraokeHost() {
       )}
       {phase === "waiting" && (
         <LowerThird
-          kicker={voice.connected ? (voice.listening ? "LISTENING 🔊" : "ON AIR") : "WAITING"}
-          kickerColor={voice.connected ? PAL.slime : PAL.orange} kickerFg={PAL.ink}
-          headline={!voice.connected
-            ? "Challenger checks in, then go live — the MC's got material."
-            : voice.listening ? "Say “I'm ready!” to kick it off." : "The AI host is hyping up the room…"}
+          kicker={voice.connected ? (voice.listening ? "LISTENING 🔊" : "ON AIR") : (room && room.players.length < 2 ? "WAITING" : "STAKE UP")}
+          kickerColor={voice.connected ? PAL.slime : (room && room.players.length < 2 ? PAL.orange : PAL.yellow)} kickerFg={PAL.ink}
+          headline={voice.connected
+            ? (voice.listening ? "Say “I'm ready!” to kick it off." : "The host is taking over…")
+            : room && room.players.length < 2
+              ? "Waiting for the challenger to check in…"
+              : `Both in! Stake ${stakeSOL} SOL each to play, then the host takes the mic.`}
           bodyColor={PAL.white}
-          action={!voice.connected ? <BevelBtn color={PAL.slime} onClick={handleEnterHost} disabled={!room || room.players.length < 2}>{room && room.players.length < 2 ? "WAITING…" : "START »"}</BevelBtn> : undefined} />
+          action={!voice.connected
+            ? <BevelBtn color={PAL.slime} onClick={handleStakeAndStart} disabled={busy || !room || room.players.length < 2}>
+                {room && room.players.length < 2 ? "WAITING…" : busy ? "STAKING…" : `💰 STAKE ${stakeSOL} SOL & PLAY »`}
+              </BevelBtn>
+            : undefined} />
       )}
       {phase === "finished" && (
         <LowerThird kicker="THE MC 🔊" kickerColor={PAL.magenta} kickerFg={PAL.white}

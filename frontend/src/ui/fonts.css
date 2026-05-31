@@ -16,6 +16,8 @@ img, svg, canvas { max-width: 100%; }
 .md-blink { animation: none; }
 
 @keyframes mdConfetti { 0% { top: -8%; opacity: 1; } 100% { top: 110%; opacity: 0.9; } }
+/* dynamic "tallying" bar — fills toward the end over ~5s while scores compute */
+@keyframes mdLoadFill { 0% { width: 5%; } 70% { width: 80%; } 100% { width: 95%; } }
 .md-spin  { animation: mdSpin 14s linear infinite; }
 .md-eq    { transform-origin: bottom; animation: mdEq 0.7s ease-in-out infinite; }
 

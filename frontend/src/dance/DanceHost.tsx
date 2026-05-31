@@ -8,7 +8,7 @@ import { useEscrow } from "../services/useEscrow";
 import { useDance } from "../services/useDance";
 import { useVoiceHost } from "../game/useVoiceHost";
 import PoseOverlay from "./PoseOverlay";
-import { PAL, FONT, BevelBtn, Panel, Splat, Confetti, OnAirBar, StageBG, LowerThird, ScoreBug, Nameplate } from "@/ui";
+import { PAL, FONT, BevelBtn, Panel, Confetti, OnAirBar, StageBG, LowerThird, ScoreBug, Nameplate } from "@/ui";
 
 const DEMO_SONG_ID = "rasputin";
 const VIDEO_W = 640;
@@ -18,6 +18,9 @@ const API_BASE = import.meta.env.VITE_API_BASE ?? "";
 
 // Epic victory fanfare, fired when the confetti shoots on the reveal.
 const playVictory = () => { try { const a = new Audio(`${API_BASE}/api/sfx/victory`); a.volume = 0.9; void a.play().catch(() => {}); } catch { /* */ } };
+
+// "I'm ready" / "let's go" etc. — detected in the player's speech to start instantly.
+const READY_RE = /\b(ready|yes|yea|yeah|yep|let'?s go|i'?m ready|let'?s do it|bring it|hit it|do it|set)\b/i;
 
 const kicker = (c: string): CSSProperties => ({ fontFamily: FONT.display, fontSize: "clamp(20px,4vw,30px)", letterSpacing: 4, color: c, textShadow: `2px 2px 0 ${PAL.ink}` });
 
@@ -34,9 +37,11 @@ function Captions({ host, you }: { host: string; you: string }) {
 
 // Rotating stall prompts — the host keeps talking through these (one per turn) until the
 // scores load, so the scoring screen NEVER has dead air. NEVER reveal a winner here.
+// Short stall lines while the judges tally (~5s). ONE punchy sentence each — no monologue.
 const FILLERS = [
-  "Both dancers are done and the judges are counting! Keep the crowd HOT and talk continuously for a good while, no pauses: hype the dance-off, drop a couple fun facts about the track or the moves, tease how close it might be, crack a joke. Keep rolling until you're handed the result. Do NOT announce a winner yet.",
-  "Keep the energy rolling non-stop — more hype, more facts, more jokes, tease the suspense. Still no winner; just keep them entertained until the scores drop.",
+  "Say ONE short, high-energy line: both dancers are done and the judges are tallying. No winner yet.",
+  "ONE short sentence teasing how close it is. Still no winner.",
+  "ONE short quip while we wait. No winner yet.",
 ];
 
 interface ScoreRow { player_id: string; score: number; }
@@ -100,6 +105,9 @@ export default function DanceHost() {
   const pendingStartRef = useRef<null | "p1" | "p2">(null);
   const fallbackTimerRef = useRef<any>(null);            // ensures the round starts if turn_complete is odd
   const [countdown, setCountdown] = useState<number | null>(null);
+  const countdownRef = useRef<number | null>(null);
+  countdownRef.current = countdown;
+  const lastStartedRef = useRef<"p1" | "p2" | null>(null);   // which turn we've already kicked off
   const [revealCountdown, setRevealCountdown] = useState<number | null>(null);   // "THE WINNER IS… 3-2-1"
   const [confetti, setConfetti] = useState(false);   // 🎉 burst on the winner reveal
 
@@ -112,18 +120,25 @@ export default function DanceHost() {
   const onSongEndRef = useRef<() => void>(() => {});
   const dance = useDance(DEMO_SONG_ID, () => onSongEndRef.current());
 
+  // Start a turn instantly off the player's spoken "ready" (defined via a ref below; uses `voice`).
+  const tryStartReadyRef = useRef<(t: string) => void>(() => {});
+
   const voice = useVoiceHost({
     onHostCaption: (t) => revealDriverRef.current(t),   // reveal scores off his spoken count
+    onUserSpeech: (t) => tryStartReadyRef.current(t),   // start instantly on "ready"
     allowSfx: () => !singingRef.current,                // no SFX while a player is dancing
     onCommand: (cmd) => {
-      // Guard by game state so a stray/early tool call can't jump turns: P1 only before any
-      // turn; P2 only once P1 is done and we're waiting on P2.
+      // Guard by game state so a stray/early/duplicate tool call can't jump or double-start a
+      // turn: P1 only before any turn; P2 only once P1 is done; never if a countdown is running
+      // or that turn was already kicked off.
       let which: "p1" | "p2" | null = null;
       if (cmd === "start_game" || cmd === "start_p1_turn") {
-        if (singingRef.current || pendingP2Ref.current || finishRef.current) return;
+        if (singingRef.current || pendingP2Ref.current || finishRef.current
+          || countdownRef.current !== null || lastStartedRef.current === "p1") return;
         which = "p1";
       } else if (cmd === "start_p2_turn") {
-        if (!pendingP2Ref.current || singingRef.current) return;   // ignore if P1 not finished yet
+        if (!pendingP2Ref.current || singingRef.current
+          || countdownRef.current !== null || lastStartedRef.current === "p2") return;
         which = "p2";
       } else {
         return;   // reveal_scores / end_game: reveal is caption-driven now
@@ -166,26 +181,25 @@ export default function DanceHost() {
 
   // "Start" button — pressed once BOTH players have joined. This user gesture brings the
   // host in (unlocks audio); the backend auto-greets and asks if we're ready to start.
-  const handleEnterHost = useCallback(() => {
-    voice.connect(true);
-    // Warm the scoring music bed now (first generation takes a few seconds) so it's cached
-    // and ready the instant we reach the scoring screen.
-    fetch(`${API_BASE}/api/sfx/scoring_music`).catch(() => {});
-    fetch(`${API_BASE}/api/sfx/victory`).catch(() => {});   // pre-warm the victory fanfare
-  }, [voice]);
-
-  // Host called start_p1_turn (after hearing "ready") → begin the match and put P1 on the
-  // floor. Staking is best-effort so the game always begins — never blocks on a wallet.
-  const startP1 = useCallback(async () => {
-    if (!room || singingRef.current) return;
+  // Lobby "STAKE TO PLAY" — locks the wager on-chain (best-effort), THEN brings the host in.
+  const handleStakeAndStart = useCallback(async () => {
+    if (!room) return;
     if (room.players.length >= 2) {
-      try { await createAndStake(room.code, room.players[1].wallet, room.stake); }
+      try { await createAndStake(room.code, room.players[1].wallet, room.stake); addLog("Wager staked ✓"); }
       catch (e: any) { addLog("stake skipped: " + e.message); }
     }
+    voice.connect(true);   // host takes over
+    fetch(`${API_BASE}/api/sfx/scoring_music`).catch(() => {});
+    fetch(`${API_BASE}/api/sfx/victory`).catch(() => {});
+  }, [room, createAndStake, addLog, voice]);
+
+  // Host called start_p1_turn (after hearing "ready") → put P1 on the floor. (Wager already staked.)
+  const startP1 = useCallback(async () => {
+    if (!room || singingRef.current) return;
     if (phase === "waiting") beginGame(room.code);   // server: game:started + turn P1
     setSinging("p1");                                 // local: render P1's floor now
     void dance.startDancing();
-  }, [room, phase, createAndStake, beginGame, addLog, dance]);
+  }, [room, phase, beginGame, dance]);
   startRef.current = startP1;
 
   // Host called start_p2_turn (after Player 2 says ready) → put P2 on the floor. P1's score
@@ -196,6 +210,16 @@ export default function DanceHost() {
     void dance.startDancing();
   }, [dance]);
   advanceRef.current = advanceToP2;
+
+  tryStartReadyRef.current = (text: string) => {
+    if (countdownRef.current !== null || singingRef.current) return;   // already starting / mid-turn
+    if (!READY_RE.test(text)) return;
+    if (!finishRef.current && !pendingP2Ref.current && lastStartedRef.current !== "p1") {
+      lastStartedRef.current = "p1"; voice.stopListening(); startCountdownRef.current("p1");
+    } else if (pendingP2Ref.current && lastStartedRef.current !== "p2") {
+      lastStartedRef.current = "p2"; voice.stopListening(); startCountdownRef.current("p2");
+    }
+  };
 
   // 3-2-1 countdown (big on screen), then actually start the turn so the music begins on "GO".
   const startCountdownRef = useRef<(which: "p1" | "p2") => void>(() => {});
@@ -386,7 +410,7 @@ export default function DanceHost() {
       <div style={page}>
         <OnAirBar home="/dance" tag="ON AIR" tagColor={PAL.red} blink={false} right="MIC DROP DANCE · ON THE FLOOR" />
         <StageBG>
-          <div style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 18, padding: "32px 18px", width: "100%", maxWidth: 880, margin: "0 auto" }}>
+          <div style={{ flex: 1, minHeight: 0, overflowY: "auto", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "safe center", gap: 18, padding: "32px 18px", width: "100%", maxWidth: 880, margin: "0 auto" }}>
             <Nameplate kicker="NOW DANCING" name={singing === "p1" ? "PLAYER 1" : "PLAYER 2"} color={PAL.magenta} sub="LIVE" />
             <div style={{ position: "relative", width: VIDEO_W, maxWidth: "100%", border: `4px solid ${PAL.ink}`, boxShadow: `6px 6px 0 ${PAL.ink}`, background: PAL.ink }}>
               <video
@@ -459,7 +483,7 @@ export default function DanceHost() {
           <WalletMultiButton />
         </div>} />
       <StageBG>
-        <div style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 18, padding: "32px 18px", width: "100%", maxWidth: 880, margin: "0 auto" }}>
+        <div style={{ flex: 1, minHeight: 0, overflowY: "auto", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "safe center", gap: 18, padding: "32px 18px", width: "100%", maxWidth: 880, margin: "0 auto" }}>
 
           {phase === "lobby" && (
             <>
@@ -507,7 +531,7 @@ export default function DanceHost() {
                 Both dancers are off the floor — the MC's deliberating while the judges count every move.
               </div>
               <div style={{ width: "100%", maxWidth: 560, height: 18, border: `3px solid ${PAL.ink}`, background: PAL.white, overflow: "hidden" }}>
-                <div style={{ height: "100%", width: "70%", background: `repeating-linear-gradient(45deg, ${PAL.magenta} 0 12px, ${PAL.cyan} 12px 24px)` }} />
+                <div style={{ height: "100%", width: "5%", background: `repeating-linear-gradient(45deg, ${PAL.magenta} 0 12px, ${PAL.cyan} 12px 24px)`, animation: "mdLoadFill 5s ease-out forwards" }} />
               </div>
               <div style={{ fontFamily: FONT.mono, fontSize: 15, color: PAL.cyan }}>scoring the choreography — the MC's keeping the crowd warm…</div>
             </>
@@ -525,10 +549,21 @@ export default function DanceHost() {
                 <ScoreBug big
                   a={{ name: room.players[0]?.name ?? "P1", score: finish.scores[0]?.score ?? 0, color: finish.winner === "p1" ? PAL.slime : PAL.white }}
                   b={{ name: room.players[1]?.name ?? "P2", score: finish.scores[1]?.score ?? 0, color: finish.winner === "p2" ? PAL.slime : PAL.magenta, fg: finish.winner === "p2" ? PAL.ink : PAL.white }} />
-                {finish.winner !== "tie" && finish.payout_tx && (
-                  <Splat color={PAL.yellow} size={130} style={{ fontFamily: FONT.display, fontSize: 14, color: PAL.ink, padding: 10, transform: "rotate(-6deg)" }}>
-                    PAID ✓<br /><span style={{ fontFamily: FONT.mono, fontSize: 11 }}>{finish.payout_tx.slice(0, 14)}…</span>
-                  </Splat>
+                {finish.payout_tx && (
+                  <Panel color={PAL.white} title={finish.winner === "tie" ? "💸 REFUNDED" : "💸 PAYOUT"} titleBg={PAL.ink} titleFg={PAL.yellow} style={{ width: "100%", maxWidth: 600 }}>
+                    <div style={{ fontFamily: FONT.display, fontSize: 15, letterSpacing: 1, color: PAL.cyanDk, marginBottom: 6 }}>
+                      {finish.winner === "tie" ? "STAKES RETURNED" : `${(finish.winner === "p1" ? room.players[0]?.name : room.players[1]?.name) ?? "WINNER"} TAKES THE POT ✓`}
+                    </div>
+                    <div style={{ fontFamily: FONT.mono, fontSize: 13, color: PAL.ink, wordBreak: "break-all" }}>
+                      <span style={{ color: PAL.purpleDp }}>tx:</span> {finish.payout_tx}
+                    </div>
+                    {/^[1-9A-HJ-NP-Za-km-z]{30,}$/.test(finish.payout_tx) && (
+                      <a href={`https://explorer.solana.com/tx/${finish.payout_tx}?cluster=devnet`} target="_blank" rel="noreferrer"
+                        style={{ display: "inline-block", marginTop: 8, fontFamily: FONT.display, fontSize: 14, letterSpacing: 1, color: PAL.cyanDk }}>
+                        VIEW ON SOLANA EXPLORER »
+                      </a>
+                    )}
+                  </Panel>
                 )}
                 {finish.commentary && (
                   <Panel color={PAL.white} title="THE MC · THE VERDICT" titleBg={PAL.magenta} titleFg={PAL.white} style={{ maxWidth: 600, width: "100%" }}>
@@ -556,13 +591,19 @@ export default function DanceHost() {
       )}
       {phase === "waiting" && (
         <LowerThird
-          kicker={voice.connected ? (voice.listening ? "LISTENING 🔊" : "ON AIR") : "WAITING"}
-          kickerColor={voice.connected ? PAL.slime : PAL.orange} kickerFg={PAL.ink}
-          headline={!voice.connected
-            ? "Challenger checks in, then go live — the MC's got material."
-            : voice.listening ? "Say “I'm ready!” to kick it off." : "The AI host is hyping up the room…"}
+          kicker={voice.connected ? (voice.listening ? "LISTENING 🔊" : "ON AIR") : (room && room.players.length < 2 ? "WAITING" : "STAKE UP")}
+          kickerColor={voice.connected ? PAL.slime : (room && room.players.length < 2 ? PAL.orange : PAL.yellow)} kickerFg={PAL.ink}
+          headline={voice.connected
+            ? (voice.listening ? "Say “I'm ready!” to kick it off." : "The host is taking over…")
+            : room && room.players.length < 2
+              ? "Waiting for the challenger to check in…"
+              : `Both in! Stake ${stakeSOL} SOL each to play, then the host takes the floor.`}
           bodyColor={PAL.cyan}
-          action={!voice.connected ? <BevelBtn color={PAL.magenta} fg={PAL.white} onClick={handleEnterHost} disabled={!room || room.players.length < 2}>{room && room.players.length < 2 ? "WAITING…" : "START »"}</BevelBtn> : undefined} />
+          action={!voice.connected
+            ? <BevelBtn color={PAL.magenta} fg={PAL.white} onClick={handleStakeAndStart} disabled={busy || !room || room.players.length < 2}>
+                {room && room.players.length < 2 ? "WAITING…" : busy ? "STAKING…" : `💰 STAKE ${stakeSOL} SOL & PLAY »`}
+              </BevelBtn>
+            : undefined} />
       )}
       {phase === "finished" && (
         <LowerThird kicker="THE MC 🔊" kickerColor={PAL.magenta} kickerFg={PAL.white}

@@ -24,6 +24,9 @@ export function useVoiceHost(opts: {
   onHostCaption?: (text: string) => void;
   /** Gate sound effects by game state — return false to suppress (e.g. during a player's turn). */
   allowSfx?: (name: string) => boolean;
+  /** Fires with the player's recognized speech (interim + final) so the page can react
+   *  instantly — e.g. start the game the moment they say "ready". */
+  onUserSpeech?: (text: string, isFinal: boolean) => void;
 }) {
   const wsRef = useRef<WebSocket | null>(null);
   const playRef = useRef<AudioContext | null>(null);
@@ -51,6 +54,8 @@ export function useVoiceHost(opts: {
   onHostCaptionRef.current = opts.onHostCaption;
   const allowSfxRef = useRef(opts.allowSfx);
   allowSfxRef.current = opts.allowSfx;
+  const onUserSpeechRef = useRef(opts.onUserSpeech);
+  onUserSpeechRef.current = opts.onUserSpeech;
 
   // ── host audio + SFX (shared timeline so they never overlap) ──
   const ensureCtx = () => {
@@ -172,7 +177,11 @@ export function useVoiceHost(opts: {
         const t = e.results[i][0].transcript;
         if (e.results[i].isFinal) final += t; else interim += t;
       }
-      setYouCaption(interim || final);
+      const text = interim || final;
+      setYouCaption(text);
+      // Surface the reply AS it's recognized (interim too) so the page can react instantly,
+      // e.g. start the game the moment you say "ready" — no waiting for the host round-trip.
+      if (text) onUserSpeechRef.current?.(text, !!final);
       if (final) {
         gotFinalRef.current = true; expectReplyRef.current = false;   // got the answer — stop reopening
         tell(final);
