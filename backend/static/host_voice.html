@@ -36,6 +36,7 @@ so he doesn't hear himself. Connects to <code>/ws/host</code> (Gemini Live + Ele
 <div class="row">
   <button id="talk">● Start talking</button>
   <button id="greet" class="pill">🔊 Greet</button>
+  <button id="checkmic" class="pill">🎚 Check mic</button>
   <span class="status" id="status">idle</span>
 </div>
 
@@ -161,6 +162,24 @@ $("talk").onclick = async () => {
     logLine(`mic error: ${e.name} — ${e.message}`);
   }
 };
+
+async function checkMic() {
+  const lines = [];
+  lines.push(`secure context: ${window.isSecureContext} (origin ${location.origin})`);
+  lines.push(`getUserMedia available: ${!!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia)}`);
+  try {
+    const p = await navigator.permissions.query({ name: "microphone" });
+    lines.push(`mic permission: ${p.state}`);
+  } catch { lines.push("mic permission: (Permissions API unavailable — Safari/Firefox)"); }
+  try {
+    const devs = await navigator.mediaDevices.enumerateDevices();
+    const mics = devs.filter((d) => d.kind === "audioinput");
+    lines.push(`audio inputs: ${mics.length} ${mics.length ? "(" + mics.map(m => m.label || "unlabeled").join(", ") + ")" : ""}`);
+  } catch { lines.push("could not enumerate devices"); }
+  lines.forEach(logLine);
+  setStatus("mic check done — see log below");
+}
+$("checkmic").onclick = () => checkMic().catch((e) => logLine("check failed: " + e));
 
 $("greet").onclick = () => { if (!ws || ws.readyState > 1) openWS(); setTimeout(() => ws.send(JSON.stringify({ type: "greet" })), 300); };
 
