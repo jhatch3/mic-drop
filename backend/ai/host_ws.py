@@ -50,7 +50,9 @@ async def host_ws(ws: WebSocket) -> None:
             )
 
             rx = {"chunks": 0, "bytes": 0}
-            auto = {"started": False}   # auto-start the match once, after the intro lands
+            # Auto-start the match once after the intro lands. Clients can disable this
+            # (e.g. lobby chat mode) by sending {"type":"mode","autostart":false}.
+            auto = {"started": False, "enabled": True}
 
             async def browser_to_gemini() -> None:
                 while True:
@@ -80,6 +82,8 @@ async def host_ws(ws: WebSocket) -> None:
                                 turns=types.Content(role="user", parts=[types.Part(text=data["text"])]),
                                 turn_complete=True,
                             )
+                        elif data.get("type") == "mode":
+                            auto["enabled"] = bool(data.get("autostart", True))
                         elif data.get("type") == "greet":
                             await session.send_client_content(
                                 turns=types.Content(role="user", parts=[types.Part(text=GREETING)]),
@@ -122,7 +126,7 @@ async def host_ws(ws: WebSocket) -> None:
                             await ws.send_json({"type": "turn_complete"})
                             # After the intro ("...are we ready to start?") lands, beat for
                             # a moment then auto-confirm so the host starts the game himself.
-                            if not auto["started"]:
+                            if auto["enabled"] and not auto["started"]:
                                 auto["started"] = True
                                 await asyncio.sleep(1.3)
                                 await session.send_client_content(

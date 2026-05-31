@@ -64,7 +64,12 @@ export function useVoiceHost(opts: {
     const ws = new WebSocket(`${proto}://${location.host}/ws/host`);
     ws.binaryType = "arraybuffer";
     wsRef.current = ws;
-    ws.onopen = () => setConnected(true);
+    ws.onopen = () => {
+      setConnected(true);
+      // Chat mode: host greets + chats but does NOT auto-start a match (lobby-safe).
+      // Starting the game is explicit via begin().
+      ws.send(JSON.stringify({ type: "mode", autostart: false }));
+    };
     ws.onclose = () => setConnected(false);
     ws.onmessage = (ev) => {
       if (ev.data instanceof ArrayBuffer) { playPCM(ev.data); return; }
@@ -83,5 +88,10 @@ export function useVoiceHost(opts: {
     if (ws && ws.readyState === 1) ws.send(JSON.stringify({ type: "text", text }));
   }, []);
 
-  return { connect, disconnect, tell, connected };
+  /** Tell the host the players are ready so he kicks off the match (calls start_game). */
+  const begin = useCallback(() => {
+    tell("The players are ready — start the game now! Hype them up and begin Player 1's turn.");
+  }, [tell]);
+
+  return { connect, disconnect, tell, begin, connected };
 }

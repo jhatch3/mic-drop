@@ -583,6 +583,10 @@ export default function Host() {
             >
               {busy ? "…" : wallet.publicKey ? "▶ Create Room" : "Connect Wallet First"}
             </NeonButton>
+
+            <NeonButton onClick={voice.connect} disabled={voice.connected} variant="cyan" className="mt-2 w-full">
+              {voice.connected ? "🎙 AI Host connected — chat below" : "🎙 Chat with the AI Host"}
+            </NeonButton>
           </CRTCard>
         )}
 
@@ -618,8 +622,12 @@ export default function Host() {
               </NeonButton>
             )}
             {room.players.length >= 1 && (
-              <NeonButton onClick={voice.connect} disabled={voice.connected} variant="cyan" className="mt-2 w-full">
-                {voice.connected ? "🎙 AI Host is running the show" : "🎙 Let the AI Host start it"}
+              <NeonButton
+                onClick={voice.connected ? voice.begin : voice.connect}
+                variant="cyan"
+                className="mt-2 w-full"
+              >
+                {voice.connected ? "🎙 Host, start the show!" : "🎙 Bring in the AI Host"}
               </NeonButton>
             )}
           </CRTCard>
